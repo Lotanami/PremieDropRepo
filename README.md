@@ -63,12 +63,12 @@ This is intentionally kept simple. Here's what could be added:
 
 - [ ] Thumbnail previews for video files (using `ffmpeg`)
 - [ ] Search / filter bar
-- [ ] Tags or categories for organising files
+- [✅ ] Tags or categories for organising files
 - [ ] CEP panel companion for direct timeline placement in Premiere
 - [ ] Support for folder watching
 - [ ] System tray mode (run minimised in the background)
 - [ ] After Effects / DaVinci Resolve / Final Cut support
-- [ ] Collections / multiple lists
+- [✅ ] Collections / multiple lists
 
 ---
 

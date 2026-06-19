@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self' data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <title>PremieDrop Bridge</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main>
+        <header>
+            <div>
+                <h1>PremieDrop</h1>
+                <p>Premiere Pro 2022 bridge</p>
+            </div>
+            <span id="connection" class="status">Ready</span>
+        </header>
+
+        <section class="queue">
+            <div>
+                <span class="label">Pending import</span>
+                <strong id="file-count">No queue found</strong>
+                <span id="folder-name" class="folder">No PremieDrop folder selected</span>
+            </div>
+            <button id="refresh" title="Refresh queue">Refresh</button>
+        </section>
+
+        <button id="import" class="primary" disabled>Import Now</button>
+        <p id="message" class="message">Waiting for PremieDrop...</p>
+    </main>
+    <script src="index.js"></script>
+</body>
+</html>

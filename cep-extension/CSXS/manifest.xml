@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest
+    Version="7.0"
+    ExtensionBundleId="com.premiedrop.bridge"
+    ExtensionBundleVersion="0.1.0">
+    <ExtensionList>
+        <Extension Id="com.premiedrop.bridge.panel"/>
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <Host Name="PPRO" Version="[22.0,23.0)"/>
+        </HostList>
+        <LocaleList>
+            <Locale Code="All"/>
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="11.0"/>
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.premiedrop.bridge.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./client/index.html</MainPath>
+                    <ScriptPath>./host/index.jsx</ScriptPath>
+                    <CEFCommandLine>
+                        <Parameter>--enable-nodejs</Parameter>
+                        <Parameter>--mixed-context</Parameter>
+                    </CEFCommandLine>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>PremieDrop Bridge</Menu>
+                    <Geometry>
+                        <Size>
+                            <Width>340</Width>
+                            <Height>220</Height>
+                        </Size>
+                        <MinSize>
+                            <Width>280</Width>
+                            <Height>180</Height>
+                        </MinSize>
+                        <MaxSize>
+                            <Width>1000</Width>
+                            <Height>800</Height>
+                        </MaxSize>
+                    </Geometry>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>

@@ -10,9 +10,12 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QFileDialog,
     QAbstractItemView, QMenu, QAction, QMessageBox, QFrame, QSizePolicy,
-    QInputDialog, QListView, QStyledItemDelegate, QSlider, QShortcut
+    QInputDialog, QListView, QStyledItemDelegate, QSlider, QShortcut,
+    QDialog, QLineEdit, QComboBox, QProgressBar
 )
-from PyQt5.QtCore import Qt, QMimeData, QUrl, QSize, QRect, QTimer, QPoint
+from PyQt5.QtCore import (
+    Qt, QMimeData, QUrl, QSize, QRect, QTimer, QPoint, QThread, pyqtSignal
+)
 from PyQt5.QtGui import (
     QIcon, QColor, QFont, QDrag, QPalette, QPixmap, QPainter, QPen,
     QKeySequence, QPolygon
@@ -27,6 +30,11 @@ try:
     import imageio_ffmpeg
 except ImportError:
     imageio_ffmpeg = None
+
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
 
 SAVE_FILE = os.path.join(os.path.dirname(__file__), "saved_files.json")
 APP_DATA_DIR = os.path.join(
@@ -1224,12 +1232,269 @@ class ImagePreview(QWidget):
             main_window.embedded_preview_closed()
 
 
+class DownloadDialog(QDialog):
+    """Collect URL download settings without blocking the main UI."""
+
+    def __init__(self, sections, default_folder, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Download Media")
+        self.setMinimumWidth(430)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1a1a2e;
+                color: #ddddef;
+            }
+            QLabel {
+                color: #aaaac6;
+                font-size: 11px;
+            }
+            QLineEdit, QComboBox {
+                min-height: 30px;
+                padding: 3px 7px;
+                background-color: #16213e;
+                color: #eeeeff;
+                border: 1px solid #3a3a66;
+                border-radius: 5px;
+            }
+            QPushButton {
+                min-height: 30px;
+                padding: 5px 12px;
+                background-color: #24244d;
+                color: white;
+                border: 1px solid #45456f;
+                border-radius: 5px;
+            }
+            QPushButton#download_confirm {
+                background-color: #6C63FF;
+                border-color: #6C63FF;
+                font-weight: bold;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+
+        layout.addWidget(QLabel("Media URL"))
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("https://...")
+        layout.addWidget(self.url_input)
+
+        option_row = QHBoxLayout()
+        mode_col = QVBoxLayout()
+        mode_col.addWidget(QLabel("Download as"))
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Video (MP4)", "Audio (MP3)"])
+        self.mode_combo.currentIndexChanged.connect(self.update_mode)
+        mode_col.addWidget(self.mode_combo)
+
+        quality_col = QVBoxLayout()
+        quality_col.addWidget(QLabel("Quality"))
+        self.quality_combo = QComboBox()
+        quality_col.addWidget(self.quality_combo)
+
+        section_col = QVBoxLayout()
+        section_col.addWidget(QLabel("PremieDrop section"))
+        self.section_combo = QComboBox()
+        self.section_combo.addItems([section["name"] for section in sections])
+        section_col.addWidget(self.section_combo)
+
+        option_row.addLayout(mode_col)
+        option_row.addLayout(quality_col)
+        option_row.addLayout(section_col)
+        layout.addLayout(option_row)
+
+        layout.addWidget(QLabel("Save folder"))
+        folder_row = QHBoxLayout()
+        self.folder_input = QLineEdit(default_folder)
+        browse_btn = QPushButton("Browse")
+        browse_btn.clicked.connect(self.choose_folder)
+        folder_row.addWidget(self.folder_input, 1)
+        folder_row.addWidget(browse_btn)
+        layout.addLayout(folder_row)
+
+        permission_note = QLabel("Download only media you have permission to use.")
+        permission_note.setStyleSheet("color: #777799; font-size: 10px;")
+        layout.addWidget(permission_note)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        download_btn = QPushButton("Download")
+        download_btn.setObjectName("download_confirm")
+        download_btn.clicked.connect(self.validate_and_accept)
+        buttons.addWidget(cancel_btn)
+        buttons.addWidget(download_btn)
+        layout.addLayout(buttons)
+
+        self.update_mode()
+
+    def choose_folder(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Download Folder",
+            self.folder_input.text()
+        )
+        if folder:
+            self.folder_input.setText(folder)
+
+    def update_mode(self):
+        is_audio = self.mode_combo.currentIndex() == 1
+        self.quality_combo.clear()
+        if is_audio:
+            self.quality_combo.addItems(["320 kbps", "192 kbps", "128 kbps"])
+            preferred = "Sound effects (.mp3 etc)"
+        else:
+            self.quality_combo.addItems(["Best", "1080p", "720p", "480p"])
+            preferred = "Short Video Files (1GB<)"
+        index = self.section_combo.findText(preferred)
+        if index >= 0:
+            self.section_combo.setCurrentIndex(index)
+
+    def validate_and_accept(self):
+        url = self.url_input.text().strip()
+        folder = self.folder_input.text().strip()
+        if not url.startswith(("http://", "https://")):
+            QMessageBox.warning(self, "Invalid URL", "Enter a valid HTTP or HTTPS URL.")
+            return
+        if not folder:
+            QMessageBox.warning(self, "No Folder", "Choose where the download should be saved.")
+            return
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Folder Error", str(exc))
+            return
+        self.accept()
+
+    def settings(self):
+        return {
+            "url": self.url_input.text().strip(),
+            "folder": os.path.normpath(self.folder_input.text().strip()),
+            "mode": "audio" if self.mode_combo.currentIndex() == 1 else "video",
+            "quality": self.quality_combo.currentText(),
+            "section": self.section_combo.currentText(),
+        }
+
+
+class DownloadWorker(QThread):
+    progress = pyqtSignal(int, str)
+    completed = pyqtSignal(str, str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+
+    def progress_hook(self, data):
+        status = data.get("status")
+        if status == "downloading":
+            downloaded = data.get("downloaded_bytes", 0)
+            total = data.get("total_bytes") or data.get("total_bytes_estimate") or 0
+            percent = int(downloaded * 100 / total) if total else 0
+            speed = data.get("_speed_str", "").strip()
+            eta = data.get("_eta_str", "").strip()
+            detail = "Downloading"
+            if speed:
+                detail += f" at {speed}"
+            if eta:
+                detail += f" - ETA {eta}"
+            self.progress.emit(percent, detail)
+        elif status == "finished":
+            self.progress.emit(100, "Processing media...")
+
+    def format_selector(self):
+        quality = self.settings["quality"]
+        if self.settings["mode"] == "audio":
+            return "bestaudio/best"
+        if quality == "Best":
+            return "bv*+ba/b"
+        height = "".join(character for character in quality if character.isdigit())
+        return (
+            f"bv*[height<={height}]+ba/"
+            f"b[height<={height}]/best[height<={height}]"
+        )
+
+    def find_output_path(self, info, prepared_path):
+        expected_extension = "mp3" if self.settings["mode"] == "audio" else "mp4"
+        expected = os.path.splitext(prepared_path)[0] + "." + expected_extension
+        if os.path.exists(expected):
+            return expected
+
+        video_id = str(info.get("id", ""))
+        candidates = []
+        for name in os.listdir(self.settings["folder"]):
+            path = os.path.join(self.settings["folder"], name)
+            if not os.path.isfile(path):
+                continue
+            if video_id and f"[{video_id}]" not in name:
+                continue
+            if os.path.splitext(name)[1].lower() not in ALL_EXTENSIONS:
+                continue
+            candidates.append(path)
+        if candidates:
+            return max(candidates, key=os.path.getmtime)
+        return expected
+
+    def run(self):
+        if yt_dlp is None:
+            self.failed.emit(
+                'yt-dlp is not installed. Run: python -m pip install "yt-dlp[default]"'
+            )
+            return
+
+        settings = self.settings
+        options = {
+            "format": self.format_selector(),
+            "outtmpl": os.path.join(
+                settings["folder"],
+                "%(title).180B [%(id)s].%(ext)s"
+            ),
+            "noplaylist": True,
+            "progress_hooks": [self.progress_hook],
+            "quiet": True,
+            "no_warnings": True,
+            "windowsfilenames": platform.system() == "Windows",
+        }
+
+        ffmpeg_path = get_ffmpeg_path()
+        if ffmpeg_path:
+            options["ffmpeg_location"] = ffmpeg_path
+
+        if settings["mode"] == "audio":
+            bitrate = settings["quality"].split()[0]
+            options["postprocessors"] = [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": bitrate,
+            }]
+        else:
+            options["merge_output_format"] = "mp4"
+            options["postprocessors"] = [{
+                "key": "FFmpegVideoConvertor",
+                "preferedformat": "mp4",
+            }]
+
+        try:
+            with yt_dlp.YoutubeDL(options) as downloader:
+                info = downloader.extract_info(settings["url"], download=True)
+                prepared_path = downloader.prepare_filename(info)
+            output_path = self.find_output_path(info, prepared_path)
+            if not os.path.exists(output_path):
+                raise FileNotFoundError("The download completed but its output file was not found.")
+            self.completed.emit(output_path, settings["section"])
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.section_refresh_pending = False
         self.video_windows = []
         self.embedded_previous_size = None
+        self.download_worker = None
         self.sections = load_sections()
         self.saved_files = self.all_files()
         self.project_folder = load_project_folder()
@@ -1420,6 +1685,18 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#download_btn {
+                background-color: #2b4c7e;
+                color: #ffffff;
+                border: 1px solid #416da8;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton#download_btn:hover {
+                background-color: #35619c;
+            }
             QPushButton#add_btn {
                 background-color: #6C63FF;
                 color: white;
@@ -1549,6 +1826,35 @@ class MainWindow(QMainWindow):
         self.autosort_drop_box = AutoSortDropBox()
         layout.addWidget(self.autosort_drop_box)
 
+        self.download_progress_row = QWidget()
+        download_progress_layout = QHBoxLayout(self.download_progress_row)
+        download_progress_layout.setContentsMargins(0, 0, 0, 0)
+        download_progress_layout.setSpacing(8)
+        self.download_status = QLabel("Downloading...")
+        self.download_status.setStyleSheet("color: #aaaac6; font-size: 10px;")
+        self.download_progress = QProgressBar()
+        self.download_progress.setRange(0, 100)
+        self.download_progress.setTextVisible(True)
+        self.download_progress.setStyleSheet("""
+            QProgressBar {
+                min-height: 14px;
+                background-color: #16213e;
+                color: #ffffff;
+                border: 1px solid #35355f;
+                border-radius: 4px;
+                text-align: center;
+                font-size: 9px;
+            }
+            QProgressBar::chunk {
+                background-color: #6C63FF;
+                border-radius: 3px;
+            }
+        """)
+        download_progress_layout.addWidget(self.download_status)
+        download_progress_layout.addWidget(self.download_progress, 1)
+        self.download_progress_row.hide()
+        layout.addWidget(self.download_progress_row)
+
         self.file_list = DraggableList()
         self.file_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.file_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1603,6 +1909,13 @@ class MainWindow(QMainWindow):
         section_btn.clicked.connect(self.add_section)
         section_btn.setFixedHeight(42)
 
+        download_btn = QPushButton("URL")
+        download_btn.setObjectName("download_btn")
+        download_btn.setToolTip("Download media from a URL")
+        download_btn.clicked.connect(self.open_download_dialog)
+        download_btn.setFixedHeight(42)
+        download_btn.setFixedWidth(54)
+
         self.copy_btn = QPushButton("Import All to Premiere")
         self.copy_btn.setObjectName("copy_btn")
         self.copy_btn.clicked.connect(self.copy_new_to_project)
@@ -1617,6 +1930,7 @@ class MainWindow(QMainWindow):
 
         btn_row.addWidget(add_btn)
         btn_row.addWidget(section_btn)
+        btn_row.addWidget(download_btn)
         btn_row.addWidget(self.copy_btn)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
@@ -1625,6 +1939,65 @@ class MainWindow(QMainWindow):
         self.update_folder_label()
 
     # ── File management ──────────────────────────────────────────────
+
+    def open_download_dialog(self):
+        if self.download_worker is not None and self.download_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Download in Progress",
+                "Wait for the current download to finish."
+            )
+            return
+        if yt_dlp is None:
+            QMessageBox.information(
+                self,
+                "yt-dlp Required",
+                'Install the downloader first:\n\npython -m pip install "yt-dlp[default]"'
+            )
+            return
+
+        default_folder = self.project_folder
+        if not default_folder or not os.path.isdir(default_folder):
+            default_folder = os.path.join(
+                os.path.expanduser("~"),
+                "Downloads",
+                "PremieDrop"
+            )
+
+        dialog = DownloadDialog(self.sections, default_folder, self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        self.download_progress.setValue(0)
+        self.download_status.setText("Starting download...")
+        self.download_progress_row.show()
+
+        self.download_worker = DownloadWorker(dialog.settings(), self)
+        self.download_worker.progress.connect(self.update_download_progress)
+        self.download_worker.completed.connect(self.download_completed)
+        self.download_worker.failed.connect(self.download_failed)
+        self.download_worker.finished.connect(self.download_thread_finished)
+        self.download_worker.start()
+
+    def update_download_progress(self, percent, detail):
+        self.download_progress.setValue(percent)
+        self.download_status.setText(detail)
+
+    def download_completed(self, path, section_name):
+        self.add_files([path], section_name)
+        self.download_progress.setValue(100)
+        self.download_status.setText(f"Added {os.path.basename(path)}")
+        QTimer.singleShot(4000, self.download_progress_row.hide)
+
+    def download_failed(self, message):
+        self.download_progress_row.hide()
+        QMessageBox.warning(self, "Download Failed", message)
+
+    def download_thread_finished(self):
+        worker = self.download_worker
+        self.download_worker = None
+        if worker is not None:
+            worker.deleteLater()
 
     def preview_item(self, item):
         path = item.data(Qt.UserRole)
@@ -2211,6 +2584,14 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def closeEvent(self, event):
+        if self.download_worker is not None and self.download_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Download in Progress",
+                "Wait for the current download to finish before closing PremieDrop."
+            )
+            event.ignore()
+            return
         for window in list(self.video_windows):
             window.close_preview()
         self.image_preview.hide_for_switch()

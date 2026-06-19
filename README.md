@@ -13,6 +13,8 @@ Pro 2022 through the included CEP extension.
 - Cached FFmpeg video thumbnails
 - VLC video and audio previews
 - Scaled image previews
+- Background URL downloads through yt-dlp
+- Video quality and MP3 bitrate selection
 - Project media-folder organization
 - One-click import into matching Premiere bins
 - Duplicate-safe automatic CEP imports
@@ -21,7 +23,7 @@ Pro 2022 through the included CEP extension.
 ## Requirements
 
 - Windows 10/11
-- Python 3.8+
+- Python 3.10+
 - Adobe Premiere Pro 2022 for CEP integration
 - VLC Media Player for media previews
 
@@ -36,6 +38,12 @@ Run PremieDrop:
 ```powershell
 python main.py
 ```
+
+Use the `URL` button to download supported media directly into a selected
+PremieDrop section. Choose video/MP4 or audio/MP3, quality, destination folder,
+and section before starting the background download.
+
+Only download media you have permission to use.
 
 ## Premiere Pro 2022 Integration
 

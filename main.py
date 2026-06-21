@@ -55,6 +55,9 @@ YOUTUBE_BROWSER_STATUS_FILE = os.path.join(
 YOUTUBE_BROWSER_LOG_FILE = os.path.join(
     APP_DATA_DIR, "youtube_browser.log"
 )
+YOUTUBE_BROWSER_COMMAND_FILE = os.path.join(
+    APP_DATA_DIR, "youtube_browser_command.json"
+)
 VIDEO_THUMB_DIR = os.path.join(os.path.dirname(__file__), "thumbnail_cache")
 THUMB_SIZE = 112
 LARGE_VIDEO_BYTES = 1 * 1024 * 1024 * 1024
@@ -78,6 +81,9 @@ BASE_WINDOW_WIDTH = 650
 BASE_WINDOW_HEIGHT = 800
 YOUTUBE_PANEL_MIN_WIDTH = 520
 YOUTUBE_PANEL_PREFERRED_WIDTH = 900
+ATTACHED_BROWSER_WINDOW_WIDTH = 1250
+YOUTUBE_HOME_URL = "https://www.youtube.com/"
+MYINSTANTS_HOME_URL = "https://www.myinstants.com/en/categories/memes/gb/"
 IMAGE_PREVIEW_HEIGHT = 300
 IMAGE_PREVIEW_SCALE = 0.50
 IMAGE_PREVIEW_TEXT_SIZE = 11
@@ -1794,8 +1800,15 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.update_window_size_label()
         if hasattr(self, "file_list"):
             self.schedule_section_refresh()
+
+    def update_window_size_label(self):
+        if hasattr(self, "window_size_label"):
+            self.window_size_label.setText(
+                f"{self.width()} × {self.height()}"
+            )
 
     def schedule_section_refresh(self):
         if self.section_refresh_pending:
@@ -1930,6 +1943,18 @@ class MainWindow(QMainWindow):
             QPushButton#youtube_btn:hover {
                 background-color: #d62d24;
             }
+            QPushButton#myinstants_btn {
+                background-color: #d35400;
+                color: #ffffff;
+                border: 1px solid #f39c12;
+                border-radius: 8px;
+                padding: 8px 8px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton#myinstants_btn:hover {
+                background-color: #e67e22;
+            }
             QPushButton#add_btn {
                 background-color: #6C63FF;
                 color: white;
@@ -2004,6 +2029,11 @@ class MainWindow(QMainWindow):
                 font-size: 11px;
                 font-weight: bold;
             }
+            QLabel#window_size_label {
+                color: #777799;
+                font-size: 10px;
+                font-family: Consolas;
+            }
             QLabel#drag_tip {
                 color: #44446a;
                 font-size: 11px;
@@ -2068,10 +2098,16 @@ class MainWindow(QMainWindow):
         self.count_label.setObjectName("count_label")
         self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
+        self.window_size_label = QLabel("")
+        self.window_size_label.setObjectName("window_size_label")
+        self.window_size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.update_window_size_label()
+
         self.video_preview = None
         self._video_preview_header = header
         header.addLayout(title_col)
         header.addStretch()
+        header.addWidget(self.window_size_label)
         header.addWidget(self.count_label)
         layout.addLayout(header)
 
@@ -2190,6 +2226,13 @@ class MainWindow(QMainWindow):
         youtube_btn.setFixedHeight(42)
         youtube_btn.setFixedWidth(76)
 
+        myinstants_btn = QPushButton("MyInstants")
+        myinstants_btn.setObjectName("myinstants_btn")
+        myinstants_btn.setToolTip("Open MyInstants inside PremieDrop")
+        myinstants_btn.clicked.connect(self.open_myinstants_browser)
+        myinstants_btn.setFixedHeight(42)
+        myinstants_btn.setFixedWidth(82)
+
         self.copy_btn = QPushButton("Import All to Premiere")
         self.copy_btn.setObjectName("copy_btn")
         self.copy_btn.clicked.connect(self.copy_new_to_project)
@@ -2205,10 +2248,16 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(add_btn)
         btn_row.addWidget(section_btn)
         btn_row.addWidget(download_btn)
-        btn_row.addWidget(youtube_btn)
         btn_row.addWidget(self.copy_btn)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
+
+        browser_row = QHBoxLayout()
+        browser_row.setSpacing(6)
+        browser_row.addStretch()
+        browser_row.addWidget(youtube_btn)
+        browser_row.addWidget(myinstants_btn)
+        layout.addLayout(browser_row)
 
         # Set initial folder label state
         self.update_folder_label()
@@ -2216,10 +2265,18 @@ class MainWindow(QMainWindow):
     # ── File management ──────────────────────────────────────────────
 
     def open_youtube_browser(self):
+        self.open_media_browser("youtube")
+
+    def open_myinstants_browser(self):
+        self.open_media_browser("myinstants")
+
+    def open_media_browser(self, tab_name):
         if (
             self.youtube_browser_process is not None
             and self.youtube_browser_process.poll() is None
         ):
+            self.set_youtube_panel_attached(True)
+            self.send_browser_command(tab_name)
             return
 
         helper_path = os.path.join(
@@ -2228,7 +2285,7 @@ class MainWindow(QMainWindow):
         if not os.path.isfile(helper_path):
             QMessageBox.warning(
                 self,
-                "YouTube Browser Missing",
+                "Media Browser Missing",
                 f"The browser helper was not found:\n{helper_path}"
             )
             return
@@ -2246,6 +2303,8 @@ class MainWindow(QMainWindow):
                 os.remove(YOUTUBE_DOWNLOAD_REQUEST_FILE)
             if os.path.isfile(YOUTUBE_BROWSER_STATUS_FILE):
                 os.remove(YOUTUBE_BROWSER_STATUS_FILE)
+            if os.path.isfile(YOUTUBE_BROWSER_COMMAND_FILE):
+                os.remove(YOUTUBE_BROWSER_COMMAND_FILE)
             self.set_youtube_panel_attached(True)
             self.publish_youtube_dock_state()
             self.youtube_browser_process = subprocess.Popen(
@@ -2256,15 +2315,33 @@ class MainWindow(QMainWindow):
                     YOUTUBE_DOCK_STATE_FILE,
                     YOUTUBE_BROWSER_STATUS_FILE,
                     YOUTUBE_BROWSER_LOG_FILE,
+                    YOUTUBE_BROWSER_COMMAND_FILE,
+                    tab_name,
+                    YOUTUBE_HOME_URL,
+                    MYINSTANTS_HOME_URL,
                 ],
                 **launch_options,
             )
         except OSError as exc:
             QMessageBox.warning(
                 self,
-                "Could Not Open YouTube",
+                "Could Not Open Media Browser",
                 f"The isolated browser could not start:\n\n{exc}"
             )
+
+    def send_browser_command(self, tab_name):
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        temporary_path = f"{YOUTUBE_BROWSER_COMMAND_FILE}.tmp"
+        command = {
+            "tab": tab_name,
+            "created_at": datetime.now(timezone.utc).timestamp(),
+        }
+        try:
+            with open(temporary_path, "w", encoding="utf-8") as command_file:
+                json.dump(command, command_file)
+            os.replace(temporary_path, YOUTUBE_BROWSER_COMMAND_FILE)
+        except OSError:
+            pass
 
     def set_youtube_panel_attached(self, attached):
         if self.youtube_panel_attached == attached:
@@ -2274,14 +2351,11 @@ class MainWindow(QMainWindow):
         self.youtube_panel_attached = attached
 
         if attached:
-            available_for_browser = available.width() - self.youtube_base_width
-            self.youtube_panel_width = max(
-                YOUTUBE_PANEL_MIN_WIDTH,
-                min(YOUTUBE_PANEL_PREFERRED_WIDTH, available_for_browser)
+            self.youtube_panel_width = (
+                ATTACHED_BROWSER_WINDOW_WIDTH - self.youtube_base_width
             )
-            self.youtube_host.setMaximumWidth(16777215)
-            self.youtube_host.setMinimumWidth(YOUTUBE_PANEL_MIN_WIDTH)
-            target_width = self.youtube_base_width + self.youtube_panel_width
+            self.youtube_host.setFixedWidth(self.youtube_panel_width)
+            target_width = ATTACHED_BROWSER_WINDOW_WIDTH
         else:
             self.youtube_host.setMinimumWidth(0)
             self.youtube_host.setMaximumWidth(0)
@@ -2289,7 +2363,10 @@ class MainWindow(QMainWindow):
             self.youtube_panel_width = 0
             target_width = self.youtube_base_width
 
-        self.setMinimumWidth(self.required_window_width())
+        self.setMinimumWidth(target_width)
+        self.setMaximumWidth(
+            target_width if attached else 16777215
+        )
         self.resize(target_width, self.height())
         QApplication.processEvents()
 

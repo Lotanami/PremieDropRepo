@@ -6,6 +6,7 @@ import platform
 import hashlib
 import subprocess
 from datetime import datetime, timezone
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QFileDialog,
@@ -42,6 +43,9 @@ APP_DATA_DIR = os.path.join(
     "PremieDrop"
 )
 IMPORT_QUEUE_FILE = os.path.join(APP_DATA_DIR, "premiedrop_import_queue.json")
+YOUTUBE_DOWNLOAD_REQUEST_FILE = os.path.join(
+    APP_DATA_DIR, "youtube_download_request.json"
+)
 VIDEO_THUMB_DIR = os.path.join(os.path.dirname(__file__), "thumbnail_cache")
 THUMB_SIZE = 112
 LARGE_VIDEO_BYTES = 1 * 1024 * 1024 * 1024
@@ -61,7 +65,7 @@ SECTION_NAME_ALIASES = {
     "Short Video Files (1Gb<)": "Short Video Files (1GB<)",
 }
 
-BASE_WINDOW_WIDTH = 550
+BASE_WINDOW_WIDTH = 650
 BASE_WINDOW_HEIGHT = 800
 IMAGE_PREVIEW_HEIGHT = 300
 IMAGE_PREVIEW_SCALE = 0.50
@@ -327,7 +331,6 @@ def sync_import_queue_folder(project_folder):
         pass
     invalidate_import_queue(project_folder)
 
-
 class DraggableList(QListWidget):
     """A list widget that supports dragging files OUT to other applications."""
 
@@ -495,10 +498,11 @@ class AutoSortDropBox(QLabel):
 class SectionDropBox(QWidget):
     """Responsive horizontal section with its header inside a dotted border."""
 
-    def __init__(self, main_window, section_name, files, height):
+    def __init__(self, main_window, section_name, files, height, total_count=None):
         super().__init__()
         self.main_window = main_window
         self.section_name = section_name
+        total_count = len(files) if total_count is None else total_count
         self.setAcceptDrops(True)
         self.setFixedHeight(height)
         self.setObjectName("section_box")
@@ -515,7 +519,14 @@ class SectionDropBox(QWidget):
         layout.setContentsMargins(6, 4, 6, 5)
         layout.setSpacing(3)
 
-        header = QLabel(f"{section_name} ({len(files)})")
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(4)
+
+        count_text = str(total_count)
+        if len(files) != total_count:
+            count_text = f"{len(files)}/{total_count}"
+        header = QLabel(f"{section_name} ({count_text})")
         header.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.setFixedHeight(22)
         header.setStyleSheet("""
@@ -529,7 +540,38 @@ class SectionDropBox(QWidget):
                 font-weight: bold;
             }
         """)
-        layout.addWidget(header)
+        header_row.addWidget(header, 1)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setFixedHeight(22)
+        clear_btn.setToolTip(f"Remove all files from {section_name}")
+        clear_btn.setEnabled(total_count > 0)
+        clear_btn.clicked.connect(
+            lambda: self.main_window.clear_section(self.section_name)
+        )
+        clear_btn.setStyleSheet("""
+            QPushButton {
+                min-width: 42px;
+                padding: 0px 7px;
+                background-color: #24244d;
+                color: #aaaac6;
+                border: 1px solid #45456f;
+                border-radius: 5px;
+                font-size: 9px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #653b59;
+                color: #ffffff;
+                border-color: #9a587e;
+            }
+            QPushButton:disabled {
+                color: #555577;
+                border-color: #30304f;
+            }
+        """)
+        header_row.addWidget(clear_btn)
+        layout.addLayout(header_row)
 
         self.file_list = DraggableList()
         self.file_list.setFrameShape(QFrame.NoFrame)
@@ -696,7 +738,6 @@ class VideoPreview(QWidget):
         self.setObjectName("video_preview")
         self.setAttribute(Qt.WA_StyledBackground, True)
         if self.standalone:
-            self.setAttribute(Qt.WA_DeleteOnClose, True)
             self.setWindowTitle("PremieDrop Video Preview")
             self.setMinimumSize(640, 420)
             self.resize(800, 520)
@@ -995,7 +1036,8 @@ class VideoPreview(QWidget):
         self.video_surface.show()
         window.close()
         window.deleteLater()
-        QTimer.singleShot(0, self.bind_video_surface)
+        if not self.closing:
+            QTimer.singleShot(0, self.bind_video_surface)
 
     def handle_escape(self):
         if self.fullscreen_window is not None:
@@ -1038,12 +1080,12 @@ class VideoPreview(QWidget):
             return
         self.closing = True
         self.exit_fullscreen()
-        if self.player is not None:
+        self.timer.stop()
+        if self.player is not None and not self.standalone:
             self.player.stop()
         self.set_playing_icon(False)
         self.current_path = ""
         self.current_is_video = False
-        self.timer.stop()
         if self.standalone:
             self.close()
             return
@@ -1068,20 +1110,42 @@ class VideoPreview(QWidget):
         self.exit_fullscreen()
         self.timer.stop()
         if self.player is not None:
-            self.player.stop()
-            self.player.release()
+            try:
+                self.player.stop()
+                if platform.system() == "Windows":
+                    self.player.set_hwnd(0)
+                self.player.set_media(None)
+                self.player.release()
+            except Exception:
+                pass
             self.player = None
         if self.instance is not None:
-            self.instance.release()
+            try:
+                self.instance.release()
+            except Exception:
+                pass
             self.instance = None
 
     def closeEvent(self, event):
-        self.release()
+        if not self.standalone:
+            self.release()
+            event.accept()
+            return
+
+        event.ignore()
+        self.hide()
+        self.timer.stop()
+        for shortcut in self.shortcuts:
+            shortcut.setEnabled(False)
         callback = self.on_closed
         self.on_closed = None
         if callback is not None:
             callback(self)
-        event.accept()
+        QTimer.singleShot(100, self.finish_standalone_close)
+
+    def finish_standalone_close(self):
+        self.release()
+        self.deleteLater()
 
 
 class ImagePreview(QWidget):
@@ -1232,10 +1296,70 @@ class ImagePreview(QWidget):
             main_window.embedded_preview_closed()
 
 
+class ArrowComboBox(QComboBox):
+    """Combo box with a theme-independent white dropdown triangle."""
+
+    POPUP_BACKGROUND = QColor("#202044")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        view = self.view()
+        view.setFrameShape(QFrame.NoFrame)
+        view.setContentsMargins(0, 0, 0, 0)
+        view.setAutoFillBackground(True)
+        view.viewport().setAutoFillBackground(True)
+        self._apply_popup_palette(view)
+        self._apply_popup_palette(view.viewport())
+
+    def _apply_popup_palette(self, widget):
+        palette = widget.palette()
+        for group in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
+            palette.setColor(group, QPalette.Window, self.POPUP_BACKGROUND)
+            palette.setColor(group, QPalette.Base, self.POPUP_BACKGROUND)
+            palette.setColor(group, QPalette.AlternateBase, self.POPUP_BACKGROUND)
+        widget.setPalette(palette)
+
+    def showPopup(self):
+        super().showPopup()
+        view = self.view()
+        popup = view.window()
+
+        self._apply_popup_palette(view)
+        self._apply_popup_palette(view.viewport())
+        self._apply_popup_palette(popup)
+        popup.setAutoFillBackground(True)
+        popup.setAttribute(Qt.WA_StyledBackground, True)
+        if isinstance(popup, QFrame):
+            popup.setFrameShape(QFrame.NoFrame)
+        popup.setStyleSheet(
+            "background-color: #202044;"
+            "border: 1px solid #51517f;"
+            "padding: 0px;"
+            "margin: 0px;"
+        )
+        if popup.layout():
+            popup.layout().setContentsMargins(0, 0, 0, 0)
+            popup.layout().setSpacing(0)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#ffffff"))
+        center_x = self.width() - 13
+        center_y = self.height() // 2 + 1
+        painter.drawPolygon(QPolygon([
+            QPoint(center_x - 5, center_y - 3),
+            QPoint(center_x + 5, center_y - 3),
+            QPoint(center_x, center_y + 4),
+        ]))
+
+
 class DownloadDialog(QDialog):
     """Collect URL download settings without blocking the main UI."""
 
-    def __init__(self, sections, default_folder, parent=None):
+    def __init__(self, sections, default_folder, parent=None, initial_url=""):
         super().__init__(parent)
         self.setWindowTitle("Download Media")
         self.setMinimumWidth(430)
@@ -1255,6 +1379,60 @@ class DownloadDialog(QDialog):
                 color: #eeeeff;
                 border: 1px solid #3a3a66;
                 border-radius: 5px;
+            }
+            QComboBox::drop-down {
+                width: 24px;
+                background-color: #24244d;
+                border-left: 1px solid #3a3a66;
+                border-top-right-radius: 5px;
+                border-bottom-right-radius: 5px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #202044;
+                alternate-background-color: #202044;
+                color: #eeeeff;
+                border: 1px solid #51517f;
+                selection-background-color: #6C63FF;
+                selection-color: #ffffff;
+                outline: none;
+                padding: 0px;
+                margin: 0px;
+            }
+            QComboBox QAbstractItemView QWidget {
+                background-color: #202044;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 26px;
+                padding: 3px 7px;
+                background-color: #202044;
+                color: #eeeeff;
+            }
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #6C63FF;
+                color: #ffffff;
+            }
+            QComboBox QScrollBar:vertical {
+                width: 8px;
+                background-color: #202044;
+                margin: 0px;
+            }
+            QComboBox QScrollBar::handle:vertical {
+                min-height: 18px;
+                background-color: #51517f;
+                border-radius: 4px;
+            }
+            QComboBox QScrollBar::add-line:vertical,
+            QComboBox QScrollBar::sub-line:vertical,
+            QComboBox QScrollBar::add-page:vertical,
+            QComboBox QScrollBar::sub-page:vertical {
+                height: 0px;
+                background-color: #202044;
             }
             QPushButton {
                 min-height: 30px;
@@ -1278,24 +1456,25 @@ class DownloadDialog(QDialog):
         layout.addWidget(QLabel("Media URL"))
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://...")
+        self.url_input.setText(initial_url)
         layout.addWidget(self.url_input)
 
         option_row = QHBoxLayout()
         mode_col = QVBoxLayout()
         mode_col.addWidget(QLabel("Download as"))
-        self.mode_combo = QComboBox()
+        self.mode_combo = ArrowComboBox()
         self.mode_combo.addItems(["Video (MP4)", "Audio (MP3)"])
         self.mode_combo.currentIndexChanged.connect(self.update_mode)
         mode_col.addWidget(self.mode_combo)
 
         quality_col = QVBoxLayout()
         quality_col.addWidget(QLabel("Quality"))
-        self.quality_combo = QComboBox()
+        self.quality_combo = ArrowComboBox()
         quality_col.addWidget(self.quality_combo)
 
         section_col = QVBoxLayout()
         section_col.addWidget(QLabel("PremieDrop section"))
-        self.section_combo = QComboBox()
+        self.section_combo = ArrowComboBox()
         self.section_combo.addItems([section["name"] for section in sections])
         section_col.addWidget(self.section_combo)
 
@@ -1495,12 +1674,35 @@ class MainWindow(QMainWindow):
         self.video_windows = []
         self.embedded_previous_size = None
         self.download_worker = None
+        self.youtube_browser_process = None
+        self.youtube_request_timer = QTimer(self)
+        self.youtube_request_timer.setInterval(500)
+        self.youtube_request_timer.timeout.connect(
+            self.check_youtube_browser
+        )
+        self.youtube_request_timer.start()
         self.sections = load_sections()
         self.saved_files = self.all_files()
         self.project_folder = load_project_folder()
         sync_import_queue_folder(self.project_folder)
         self.init_ui()
         self.populate_list()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.ensure_video_preview()
+
+    def ensure_video_preview(self):
+        if self.video_preview is not None:
+            return self.video_preview
+        self.video_preview = VideoPreview(self)
+        self.video_preview.enable_compact_audio_mode()
+        self.video_preview.setMinimumWidth(200)
+        self.video_preview.setMaximumWidth(250)
+        self.video_preview.hide()
+        self._video_preview_header.insertSpacing(1, 8)
+        self._video_preview_header.insertWidget(2, self.video_preview, 1)
+        return self.video_preview
 
     def all_files(self):
         files = []
@@ -1602,7 +1804,7 @@ class MainWindow(QMainWindow):
 
     def embedded_preview_active(self):
         audio_active = (
-            hasattr(self, "video_preview")
+            self.video_preview is not None
             and not self.video_preview.isHidden()
         )
         image_active = (
@@ -1697,6 +1899,18 @@ class MainWindow(QMainWindow):
             QPushButton#download_btn:hover {
                 background-color: #35619c;
             }
+            QPushButton#youtube_btn {
+                background-color: #b3261e;
+                color: #ffffff;
+                border: 1px solid #e0443a;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton#youtube_btn:hover {
+                background-color: #d62d24;
+            }
             QPushButton#add_btn {
                 background-color: #6C63FF;
                 color: white;
@@ -1776,6 +1990,19 @@ class MainWindow(QMainWindow):
                 font-size: 11px;
                 font-style: italic;
             }
+            QLineEdit#library_search {
+                min-height: 28px;
+                padding: 0px 10px;
+                background-color: #16213e;
+                color: #eeeeff;
+                border: 1px solid #3a3a66;
+                border-radius: 7px;
+                font-size: 11px;
+                selection-background-color: #6C63FF;
+            }
+            QLineEdit#library_search:focus {
+                border-color: #6C63FF;
+            }
         """)
 
         central = QWidget()
@@ -1802,15 +2029,9 @@ class MainWindow(QMainWindow):
         self.count_label.setObjectName("count_label")
         self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        self.video_preview = VideoPreview(self)
-        self.video_preview.enable_compact_audio_mode()
-        self.video_preview.setMinimumWidth(200)
-        self.video_preview.setMaximumWidth(250)
-        self.video_preview.hide()
-
+        self.video_preview = None
+        self._video_preview_header = header
         header.addLayout(title_col)
-        header.addSpacing(8)
-        header.addWidget(self.video_preview, 1)
         header.addStretch()
         header.addWidget(self.count_label)
         layout.addLayout(header)
@@ -1825,6 +2046,13 @@ class MainWindow(QMainWindow):
         # ── File list ────────────────────────────────────────────────
         self.autosort_drop_box = AutoSortDropBox()
         layout.addWidget(self.autosort_drop_box)
+
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("library_search")
+        self.search_input.setPlaceholderText("Search files, folders, or sections...")
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(self.populate_list)
+        layout.addWidget(self.search_input)
 
         self.download_progress_row = QWidget()
         download_progress_layout = QHBoxLayout(self.download_progress_row)
@@ -1897,7 +2125,7 @@ class MainWindow(QMainWindow):
 
         # ── Buttons ──────────────────────────────────────────────────
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
+        btn_row.setSpacing(6)
 
         add_btn = QPushButton("＋  Add Files")
         add_btn.setObjectName("add_btn")
@@ -1916,6 +2144,13 @@ class MainWindow(QMainWindow):
         download_btn.setFixedHeight(42)
         download_btn.setFixedWidth(54)
 
+        youtube_btn = QPushButton("YouTube")
+        youtube_btn.setObjectName("youtube_btn")
+        youtube_btn.setToolTip("Open YouTube inside PremieDrop")
+        youtube_btn.clicked.connect(self.open_youtube_browser)
+        youtube_btn.setFixedHeight(42)
+        youtube_btn.setFixedWidth(76)
+
         self.copy_btn = QPushButton("Import All to Premiere")
         self.copy_btn.setObjectName("copy_btn")
         self.copy_btn.clicked.connect(self.copy_new_to_project)
@@ -1931,6 +2166,7 @@ class MainWindow(QMainWindow):
         btn_row.addWidget(add_btn)
         btn_row.addWidget(section_btn)
         btn_row.addWidget(download_btn)
+        btn_row.addWidget(youtube_btn)
         btn_row.addWidget(self.copy_btn)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
@@ -1940,7 +2176,79 @@ class MainWindow(QMainWindow):
 
     # ── File management ──────────────────────────────────────────────
 
-    def open_download_dialog(self):
+    def open_youtube_browser(self):
+        if (
+            self.youtube_browser_process is not None
+            and self.youtube_browser_process.poll() is None
+        ):
+            return
+
+        helper_path = os.path.join(
+            os.path.dirname(__file__), "youtube_browser.py"
+        )
+        if not os.path.isfile(helper_path):
+            QMessageBox.warning(
+                self,
+                "YouTube Browser Missing",
+                f"The browser helper was not found:\n{helper_path}"
+            )
+            return
+
+        launch_options = {
+            "cwd": os.path.dirname(__file__),
+        }
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            launch_options["startupinfo"] = startupinfo
+            launch_options["creationflags"] = getattr(
+                subprocess, "CREATE_NO_WINDOW", 0
+            )
+
+        try:
+            if os.path.isfile(YOUTUBE_DOWNLOAD_REQUEST_FILE):
+                os.remove(YOUTUBE_DOWNLOAD_REQUEST_FILE)
+            self.youtube_browser_process = subprocess.Popen(
+                [
+                    sys.executable,
+                    helper_path,
+                    YOUTUBE_DOWNLOAD_REQUEST_FILE,
+                ],
+                **launch_options,
+            )
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Could Not Open YouTube",
+                f"The isolated browser could not start:\n\n{exc}"
+            )
+
+    def check_youtube_browser(self):
+        if (
+            self.youtube_browser_process is not None
+            and self.youtube_browser_process.poll() is not None
+        ):
+            self.youtube_browser_process = None
+
+        if not os.path.isfile(YOUTUBE_DOWNLOAD_REQUEST_FILE):
+            return
+
+        try:
+            with open(
+                YOUTUBE_DOWNLOAD_REQUEST_FILE, "r", encoding="utf-8"
+            ) as request_file:
+                request = json.load(request_file)
+            os.remove(YOUTUBE_DOWNLOAD_REQUEST_FILE)
+        except (OSError, ValueError):
+            return
+
+        url = request.get("url", "")
+        if isinstance(url, str) and url:
+            self.open_download_dialog(url)
+
+    def open_download_dialog(self, initial_url=""):
+        if not isinstance(initial_url, str):
+            initial_url = ""
         if self.download_worker is not None and self.download_worker.isRunning():
             QMessageBox.information(
                 self,
@@ -1964,7 +2272,12 @@ class MainWindow(QMainWindow):
                 "PremieDrop"
             )
 
-        dialog = DownloadDialog(self.sections, default_folder, self)
+        dialog = DownloadDialog(
+            self.sections,
+            default_folder,
+            self,
+            initial_url=initial_url
+        )
         if dialog.exec_() != QDialog.Accepted:
             return
 
@@ -2016,7 +2329,8 @@ class MainWindow(QMainWindow):
             return
 
         if file_type == "audio":
-            loaded = self.video_preview.load_audio(path)
+            video_preview = self.ensure_video_preview()
+            loaded = video_preview.load_audio(path)
             if loaded:
                 locked_height = max(BASE_WINDOW_HEIGHT, self.height())
                 self.setMinimumHeight(locked_height)
@@ -2094,7 +2408,7 @@ class MainWindow(QMainWindow):
         self.setMaximumHeight(16777215)
         self.setMinimumHeight(BASE_WINDOW_HEIGHT)
         self.resize(width, height)
-        if not self.video_preview.isHidden():
+        if self.video_preview is not None and not self.video_preview.isHidden():
             locked_height = max(BASE_WINDOW_HEIGHT, height)
             self.setMinimumHeight(locked_height)
             self.setMaximumHeight(locked_height)
@@ -2265,7 +2579,11 @@ class MainWindow(QMainWindow):
     def populate_list(self):
         self.file_list.clear()
         total = 0
+        visible_total = 0
         changed = False
+        search_text = ""
+        if hasattr(self, "search_input"):
+            search_text = self.search_input.text().strip().casefold()
         section_count = max(1, len(self.sections))
         viewport_height = max(120, self.file_list.viewport().height() - 8)
         separator_height = 4
@@ -2280,6 +2598,16 @@ class MainWindow(QMainWindow):
                 else:
                     changed = True
             section["files"] = valid_files
+            visible_files = valid_files
+            if search_text:
+                section_name = section["name"].casefold()
+                visible_files = [
+                    path for path in valid_files
+                    if search_text in section_name
+                    or search_text in os.path.basename(path).casefold()
+                    or search_text in os.path.basename(os.path.dirname(path)).casefold()
+                    or search_text in path.casefold()
+                ]
 
             if index:
                 separator = QListWidgetItem()
@@ -2289,6 +2617,7 @@ class MainWindow(QMainWindow):
                 self.file_list.addItem(separator)
 
             total += len(valid_files)
+            visible_total += len(visible_files)
             section_item = QListWidgetItem()
             section_item.setData(Qt.UserRole, None)
             section_item.setData(Qt.UserRole + 1, section["name"])
@@ -2298,8 +2627,9 @@ class MainWindow(QMainWindow):
             section_box = SectionDropBox(
                 self,
                 section["name"],
-                valid_files,
-                section_height
+                visible_files,
+                section_height,
+                total_count=len(valid_files)
             )
             self.file_list.setItemWidget(section_item, section_box)
 
@@ -2307,7 +2637,12 @@ class MainWindow(QMainWindow):
         if changed:
             self.save_library()
 
-        self.count_label.setText(f"{total} file{'s' if total != 1 else ''}")
+        if search_text:
+            self.count_label.setText(
+                f"{visible_total} of {total} file{'s' if total != 1 else ''}"
+            )
+        else:
+            self.count_label.setText(f"{total} file{'s' if total != 1 else ''}")
         return
         valid = []
         for path in self.saved_files:
@@ -2379,6 +2714,39 @@ class MainWindow(QMainWindow):
             self.populate_list()
 
     # ── Context menu ─────────────────────────────────────────────────
+
+    def clear_section(self, section_name):
+        section = self.find_section(section_name)
+        if section is None or not section["files"]:
+            return
+
+        files = list(section["files"])
+        reply = QMessageBox.question(
+            self,
+            "Clear Section",
+            f'Remove all {len(files)} file{"s" if len(files) != 1 else ""} '
+            f'from "{section_name}"?\n\n'
+            "Your actual files will not be deleted.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        paths = set(files)
+        if (
+            self.video_preview is not None
+            and self.video_preview.current_path in paths
+        ):
+            self.video_preview.close_preview()
+        if self.image_preview.current_path in paths:
+            self.image_preview.close_preview()
+        for window in list(self.video_windows):
+            if window.current_path in paths:
+                window.close_preview()
+
+        section["files"] = []
+        self.save_library()
+        self.populate_list()
 
     def show_context_menu(self, pos):
         self.show_context_menu_from_list(self.file_list, pos)
@@ -2485,7 +2853,10 @@ class MainWindow(QMainWindow):
         path = item.data(Qt.UserRole)
         if not path:
             return
-        if self.video_preview.current_path == path:
+        if (
+            self.video_preview is not None
+            and self.video_preview.current_path == path
+        ):
             self.video_preview.close_preview()
         if self.image_preview.current_path == path:
             self.image_preview.close_preview()
@@ -2592,14 +2963,21 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
+        if (
+            self.youtube_browser_process is not None
+            and self.youtube_browser_process.poll() is None
+        ):
+            self.youtube_browser_process.terminate()
         for window in list(self.video_windows):
             window.close_preview()
         self.image_preview.hide_for_switch()
-        self.video_preview.release()
+        if self.video_preview is not None:
+            self.video_preview.release()
         super().closeEvent(event)
 
 
 def main():
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("PremieDrop")
     app.setStyle("Fusion")

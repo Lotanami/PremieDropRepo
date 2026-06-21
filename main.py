@@ -19,7 +19,7 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtGui import (
     QIcon, QColor, QFont, QDrag, QPalette, QPixmap, QPainter, QPen,
-    QKeySequence, QPolygon
+    QKeySequence, QPolygon, QCursor
 )
 
 try:
@@ -46,6 +46,15 @@ IMPORT_QUEUE_FILE = os.path.join(APP_DATA_DIR, "premiedrop_import_queue.json")
 YOUTUBE_DOWNLOAD_REQUEST_FILE = os.path.join(
     APP_DATA_DIR, "youtube_download_request.json"
 )
+YOUTUBE_DOCK_STATE_FILE = os.path.join(
+    APP_DATA_DIR, "youtube_dock_state.json"
+)
+YOUTUBE_BROWSER_STATUS_FILE = os.path.join(
+    APP_DATA_DIR, "youtube_browser_status.json"
+)
+YOUTUBE_BROWSER_LOG_FILE = os.path.join(
+    APP_DATA_DIR, "youtube_browser.log"
+)
 VIDEO_THUMB_DIR = os.path.join(os.path.dirname(__file__), "thumbnail_cache")
 THUMB_SIZE = 112
 LARGE_VIDEO_BYTES = 1 * 1024 * 1024 * 1024
@@ -67,6 +76,8 @@ SECTION_NAME_ALIASES = {
 
 BASE_WINDOW_WIDTH = 650
 BASE_WINDOW_HEIGHT = 800
+YOUTUBE_PANEL_MIN_WIDTH = 520
+YOUTUBE_PANEL_PREFERRED_WIDTH = 900
 IMAGE_PREVIEW_HEIGHT = 300
 IMAGE_PREVIEW_SCALE = 0.50
 IMAGE_PREVIEW_TEXT_SIZE = 11
@@ -1675,8 +1686,11 @@ class MainWindow(QMainWindow):
         self.embedded_previous_size = None
         self.download_worker = None
         self.youtube_browser_process = None
+        self.youtube_panel_attached = False
+        self.youtube_panel_width = 0
+        self.youtube_base_width = BASE_WINDOW_WIDTH
         self.youtube_request_timer = QTimer(self)
-        self.youtube_request_timer.setInterval(500)
+        self.youtube_request_timer.setInterval(200)
         self.youtube_request_timer.timeout.connect(
             self.check_youtube_browser
         )
@@ -1813,9 +1827,14 @@ class MainWindow(QMainWindow):
         )
         return audio_active or image_active
 
+    def required_window_width(self):
+        if self.youtube_panel_attached:
+            return self.youtube_base_width + YOUTUBE_PANEL_MIN_WIDTH
+        return self.youtube_base_width
+
     def update_window_minimum_size(self, expand=False):
         minimum_height = self.minimum_height_for_sections()
-        self.setMinimumWidth(BASE_WINDOW_WIDTH)
+        self.setMinimumWidth(self.required_window_width())
         if self.embedded_preview_active():
             locked_height = max(minimum_height, self.height())
             self.setMinimumHeight(locked_height)
@@ -2005,9 +2024,29 @@ class MainWindow(QMainWindow):
             }
         """)
 
+        window_body = QWidget()
+        window_body.setObjectName("central")
+        self.setCentralWidget(window_body)
+        window_body_layout = QHBoxLayout(window_body)
+        window_body_layout.setContentsMargins(0, 0, 0, 0)
+        window_body_layout.setSpacing(0)
+
         central = QWidget()
         central.setObjectName("central")
-        self.setCentralWidget(central)
+        central.setFixedWidth(BASE_WINDOW_WIDTH)
+        window_body_layout.addWidget(central)
+
+        self.youtube_host = QWidget()
+        self.youtube_host.setObjectName("youtube_host")
+        self.youtube_host.setStyleSheet(
+            "background-color: #111126; border-left: 1px solid #35355f;"
+        )
+        self.youtube_host.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+        self.youtube_host.setFixedWidth(0)
+        window_body_layout.addWidget(self.youtube_host)
+
         layout = QVBoxLayout(central)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
@@ -2198,9 +2237,6 @@ class MainWindow(QMainWindow):
             "cwd": os.path.dirname(__file__),
         }
         if os.name == "nt":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            launch_options["startupinfo"] = startupinfo
             launch_options["creationflags"] = getattr(
                 subprocess, "CREATE_NO_WINDOW", 0
             )
@@ -2208,11 +2244,18 @@ class MainWindow(QMainWindow):
         try:
             if os.path.isfile(YOUTUBE_DOWNLOAD_REQUEST_FILE):
                 os.remove(YOUTUBE_DOWNLOAD_REQUEST_FILE)
+            if os.path.isfile(YOUTUBE_BROWSER_STATUS_FILE):
+                os.remove(YOUTUBE_BROWSER_STATUS_FILE)
+            self.set_youtube_panel_attached(True)
+            self.publish_youtube_dock_state()
             self.youtube_browser_process = subprocess.Popen(
                 [
                     sys.executable,
                     helper_path,
                     YOUTUBE_DOWNLOAD_REQUEST_FILE,
+                    YOUTUBE_DOCK_STATE_FILE,
+                    YOUTUBE_BROWSER_STATUS_FILE,
+                    YOUTUBE_BROWSER_LOG_FILE,
                 ],
                 **launch_options,
             )
@@ -2223,12 +2266,55 @@ class MainWindow(QMainWindow):
                 f"The isolated browser could not start:\n\n{exc}"
             )
 
+    def set_youtube_panel_attached(self, attached):
+        if self.youtube_panel_attached == attached:
+            return
+
+        available = QApplication.desktop().availableGeometry(self)
+        self.youtube_panel_attached = attached
+
+        if attached:
+            available_for_browser = available.width() - self.youtube_base_width
+            self.youtube_panel_width = max(
+                YOUTUBE_PANEL_MIN_WIDTH,
+                min(YOUTUBE_PANEL_PREFERRED_WIDTH, available_for_browser)
+            )
+            self.youtube_host.setMaximumWidth(16777215)
+            self.youtube_host.setMinimumWidth(YOUTUBE_PANEL_MIN_WIDTH)
+            target_width = self.youtube_base_width + self.youtube_panel_width
+        else:
+            self.youtube_host.setMinimumWidth(0)
+            self.youtube_host.setMaximumWidth(0)
+            self.youtube_host.setFixedWidth(0)
+            self.youtube_panel_width = 0
+            target_width = self.youtube_base_width
+
+        self.setMinimumWidth(self.required_window_width())
+        self.resize(target_width, self.height())
+        QApplication.processEvents()
+
+        frame = self.frameGeometry()
+        target_x = available.x() + max(
+            0, (available.width() - frame.width()) // 2
+        )
+        target_y = min(
+            max(frame.y(), available.y()),
+            available.y() + available.height() - frame.height()
+        )
+        self.move(target_x, target_y)
+        self.publish_youtube_dock_state()
+
     def check_youtube_browser(self):
         if (
             self.youtube_browser_process is not None
             and self.youtube_browser_process.poll() is not None
         ):
             self.youtube_browser_process = None
+            self.set_youtube_panel_attached(False)
+
+        if self.youtube_browser_process is not None:
+            self.check_youtube_browser_status()
+            self.publish_youtube_dock_state()
 
         if not os.path.isfile(YOUTUBE_DOWNLOAD_REQUEST_FILE):
             return
@@ -2244,9 +2330,55 @@ class MainWindow(QMainWindow):
 
         url = request.get("url", "")
         if isinstance(url, str) and url:
-            self.open_download_dialog(url)
+            cursor_position = None
+            try:
+                cursor_position = QPoint(
+                    int(request["cursor_x"]),
+                    int(request["cursor_y"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+            self.open_download_dialog(url, cursor_position)
 
-    def open_download_dialog(self, initial_url=""):
+    def check_youtube_browser_status(self):
+        if not os.path.isfile(YOUTUBE_BROWSER_STATUS_FILE):
+            return
+        try:
+            with open(
+                YOUTUBE_BROWSER_STATUS_FILE, "r", encoding="utf-8"
+            ) as status_file:
+                status = json.load(status_file)
+            os.remove(YOUTUBE_BROWSER_STATUS_FILE)
+        except (OSError, ValueError):
+            return
+        attached = status.get("attached")
+        if isinstance(attached, bool):
+            self.set_youtube_panel_attached(attached)
+
+    def publish_youtube_dock_state(self):
+        os.makedirs(APP_DATA_DIR, exist_ok=True)
+        host_position = self.youtube_host.mapToGlobal(QPoint(0, 0))
+        if self.youtube_panel_attached:
+            self.youtube_panel_width = self.youtube_host.width()
+        state = {
+            "parent_hwnd": int(self.youtube_host.winId()),
+            "x": host_position.x(),
+            "y": host_position.y(),
+            "width": self.youtube_host.width(),
+            "height": self.youtube_host.height(),
+            "attached": self.youtube_panel_attached,
+            "visible": self.isVisible(),
+            "minimized": self.isMinimized(),
+        }
+        temporary_path = f"{YOUTUBE_DOCK_STATE_FILE}.tmp"
+        try:
+            with open(temporary_path, "w", encoding="utf-8") as state_file:
+                json.dump(state, state_file)
+            os.replace(temporary_path, YOUTUBE_DOCK_STATE_FILE)
+        except OSError:
+            pass
+
+    def open_download_dialog(self, initial_url="", cursor_position=None):
         if not isinstance(initial_url, str):
             initial_url = ""
         if self.download_worker is not None and self.download_worker.isRunning():
@@ -2278,6 +2410,21 @@ class MainWindow(QMainWindow):
             self,
             initial_url=initial_url
         )
+        dialog.adjustSize()
+        if not isinstance(cursor_position, QPoint):
+            cursor_position = QCursor.pos()
+        available = QApplication.desktop().availableGeometry(cursor_position)
+        dialog_x = min(
+            max(cursor_position.x(), available.x()),
+            available.x() + available.width() - dialog.width()
+        )
+        dialog_y = min(
+            max(cursor_position.y(), available.y()),
+            available.y() + available.height() - dialog.height()
+        )
+        dialog.move(dialog_x, dialog_y)
+        dialog.url_input.setFocus()
+        dialog.url_input.setCursorPosition(len(initial_url))
         if dialog.exec_() != QDialog.Accepted:
             return
 
@@ -2345,11 +2492,12 @@ class MainWindow(QMainWindow):
         preview_height = self.image_preview.height() + 20
 
         if loaded:
-            self.setMinimumWidth(BASE_WINDOW_WIDTH)
+            minimum_width = self.required_window_width()
+            self.setMinimumWidth(minimum_width)
             self.setMaximumHeight(16777215)
             self.setMinimumHeight(BASE_WINDOW_HEIGHT)
             base_size = self.embedded_previous_size or self.size()
-            target_width = max(BASE_WINDOW_WIDTH, base_size.width())
+            target_width = max(minimum_width, base_size.width())
             target_height = max(
                 BASE_WINDOW_HEIGHT + preview_height,
                 base_size.height() + preview_height
@@ -2375,10 +2523,11 @@ class MainWindow(QMainWindow):
         previous_size = self.embedded_previous_size
         self.embedded_previous_size = None
         self.setMaximumHeight(16777215)
-        self.setMinimumSize(BASE_WINDOW_WIDTH, BASE_WINDOW_HEIGHT)
+        minimum_width = self.required_window_width()
+        self.setMinimumSize(minimum_width, BASE_WINDOW_HEIGHT)
         if previous_size is not None:
             self.resize(
-                max(BASE_WINDOW_WIDTH, previous_size.width()),
+                max(minimum_width, previous_size.width()),
                 max(BASE_WINDOW_HEIGHT, previous_size.height())
             )
         self.schedule_section_refresh()
@@ -2391,9 +2540,10 @@ class MainWindow(QMainWindow):
         previous_size = self.embedded_previous_size
         self.embedded_previous_size = None
         self.setMaximumHeight(16777215)
-        self.setMinimumSize(BASE_WINDOW_WIDTH, BASE_WINDOW_HEIGHT)
+        minimum_width = self.required_window_width()
+        self.setMinimumSize(minimum_width, BASE_WINDOW_HEIGHT)
         if previous_size is not None:
-            restored_width = max(BASE_WINDOW_WIDTH, previous_size.width())
+            restored_width = max(minimum_width, previous_size.width())
             restored_height = max(BASE_WINDOW_HEIGHT, previous_size.height())
             QTimer.singleShot(
                 0,
@@ -2406,8 +2556,9 @@ class MainWindow(QMainWindow):
 
     def restore_embedded_window_size(self, width, height):
         self.setMaximumHeight(16777215)
+        self.setMinimumWidth(self.required_window_width())
         self.setMinimumHeight(BASE_WINDOW_HEIGHT)
-        self.resize(width, height)
+        self.resize(max(self.required_window_width(), width), height)
         if self.video_preview is not None and not self.video_preview.isHidden():
             locked_height = max(BASE_WINDOW_HEIGHT, height)
             self.setMinimumHeight(locked_height)
@@ -2968,6 +3119,7 @@ class MainWindow(QMainWindow):
             and self.youtube_browser_process.poll() is None
         ):
             self.youtube_browser_process.terminate()
+        self.set_youtube_panel_attached(False)
         for window in list(self.video_windows):
             window.close_preview()
         self.image_preview.hide_for_switch()

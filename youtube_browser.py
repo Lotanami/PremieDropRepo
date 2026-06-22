@@ -1,11 +1,12 @@
 import ctypes
 from ctypes import wintypes
 import json
+import mimetypes
 import os
 import sys
 import time
 import traceback
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtGui import QCursor
@@ -14,6 +15,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QInputDialog,
+    QMenu,
     QMessageBox,
     QPushButton,
     QStackedWidget,
@@ -67,6 +69,7 @@ class YouTubeBrowserWindow(QWidget):
         self.status_path = status_path
         self.log_path = log_path
         self.command_path = command_path
+        self.web_view_class = web_view_class
         self.sites = {
             "youtube": {
                 "name": "YouTube",
@@ -76,11 +79,11 @@ class YouTubeBrowserWindow(QWidget):
                 "name": "MyInstants",
                 "url": myinstants_url,
             },
-            "images": {
-                "name": "Images",
-                "url": "about:blank",
-            },
         }
+        self.image_searches = {}
+        self.next_image_search_id = 1
+        self.active_image_search_id = None
+        self.requested_initial_tab = initial_tab
         self.current_tab = (
             initial_tab if initial_tab in self.sites else "youtube"
         )
@@ -139,11 +142,17 @@ class YouTubeBrowserWindow(QWidget):
                 border-color: #6b4d99;
                 font-weight: bold;
             }
+            QPushButton#close_browser {
+                background-color: #6b2632;
+                border-color: #a63f50;
+                font-weight: bold;
+            }
             QPushButton#youtube_home:hover,
             QPushButton#myinstants_home:hover,
             QPushButton#images_home:hover,
             QPushButton#youtube_download:hover,
-            QPushButton#attach_toggle:hover {
+            QPushButton#attach_toggle:hover,
+            QPushButton#close_browser:hover {
                 background-color: #6C63FF;
                 color: #ffffff;
                 border: 2px solid #ffffff;
@@ -191,15 +200,24 @@ class YouTubeBrowserWindow(QWidget):
 
         self.images_tab_btn = QPushButton("🔍")
         self.images_tab_btn.setObjectName("images_home")
-        self.images_tab_btn.setToolTip("Search images")
+        self.images_tab_btn.setToolTip("Open saved image searches")
         self.images_tab_btn.setFixedWidth(42)
-        self.images_tab_btn.clicked.connect(self.search_images)
+        self.images_menu = QMenu(self.images_tab_btn)
+        self.images_menu.setToolTipsVisible(True)
+        self.images_menu.aboutToShow.connect(self.rebuild_images_menu)
+        self.images_tab_btn.setMenu(self.images_menu)
         controls.addWidget(self.images_tab_btn)
 
         self.attach_btn = QPushButton("Pop Out")
         self.attach_btn.setObjectName("attach_toggle")
         self.attach_btn.clicked.connect(self.toggle_attachment)
         controls.addWidget(self.attach_btn)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("close_browser")
+        close_btn.setToolTip("Hide the web panel without unloading its pages")
+        close_btn.clicked.connect(self.hide_browser_panel)
+        controls.addWidget(close_btn)
 
         controls.addStretch()
 
@@ -219,14 +237,13 @@ class YouTubeBrowserWindow(QWidget):
                 self.update_page_title(name, title)
             )
             web_view.setUrl(QUrl(site["url"]))
-            if tab_name == "images":
-                web_view.setZoomFactor(0.8)
-                web_view.loadFinished.connect(
-                    lambda _ok, view=web_view: view.setZoomFactor(0.8)
-                )
             self.web_views[tab_name] = web_view
             self.tabs.addWidget(web_view)
         layout.addWidget(self.tabs, 1)
+
+        self.web_views["youtube"].page().profile().downloadRequested.connect(
+            self.handle_browser_download
+        )
 
         self.dock_timer = QTimer(self)
         self.dock_timer.setInterval(150)
@@ -239,18 +256,29 @@ class YouTubeBrowserWindow(QWidget):
         self.command_timer.timeout.connect(self.check_browser_command)
         self.command_timer.start()
         self.switch_tab(self.current_tab)
+        if self.requested_initial_tab == "images":
+            QTimer.singleShot(0, self.search_images)
 
     def current_web_view(self):
+        if self.current_tab == "images":
+            key = self.image_view_key(self.active_image_search_id)
+            return self.web_views.get(key)
         return self.web_views[self.current_tab]
 
     def go_back(self):
-        self.current_web_view().back()
+        view = self.current_web_view()
+        if view is not None:
+            view.back()
 
     def go_forward(self):
-        self.current_web_view().forward()
+        view = self.current_web_view()
+        if view is not None:
+            view.forward()
 
     def reload_page(self):
-        self.current_web_view().reload()
+        view = self.current_web_view()
+        if view is not None:
+            view.reload()
 
     def go_home(self):
         if self.current_tab == "images":
@@ -273,26 +301,116 @@ class YouTubeBrowserWindow(QWidget):
             "https://www.google.com/search?tbm=isch&q="
             f"{quote_plus(query)}"
         )
-        self.web_views["images"].setUrl(QUrl(search_url))
-        self.switch_tab("images")
+        search_id = self.next_image_search_id
+        self.next_image_search_id += 1
+        self.image_searches[search_id] = {
+            "label": query,
+            "url": search_url,
+        }
+        self.open_saved_image_search(search_id)
+
+    def image_view_key(self, search_id):
+        return f"image:{search_id}"
+
+    def create_image_view(self, search_id):
+        search = self.image_searches[search_id]
+        key = self.image_view_key(search_id)
+        web_view = self.web_view_class(self)
+        web_view.setProperty("tab_name", "images")
+        web_view.setZoomFactor(0.8)
+        web_view.loadFinished.connect(
+            lambda _ok, view=web_view: view.setZoomFactor(0.8)
+        )
+        web_view.urlChanged.connect(
+            lambda url, sid=search_id:
+            self.save_image_search_url(sid, url)
+        )
+        web_view.titleChanged.connect(
+            lambda title, sid=search_id:
+            self.update_image_page_title(sid, title)
+        )
+        web_view.setUrl(QUrl(search["url"]))
+        self.web_views[key] = web_view
+        self.tabs.addWidget(web_view)
+        return web_view
+
+    def save_image_search_url(self, search_id, url):
+        if search_id in self.image_searches:
+            self.image_searches[search_id]["url"] = url.toString()
+
+    def unload_active_image_view(self):
+        search_id = self.active_image_search_id
+        if search_id is None:
+            return
+        key = self.image_view_key(search_id)
+        web_view = self.web_views.pop(key, None)
+        if web_view is not None:
+            self.image_searches[search_id]["url"] = (
+                web_view.url().toString()
+            )
+            self.tabs.removeWidget(web_view)
+            web_view.setUrl(QUrl("about:blank"))
+            web_view.deleteLater()
+        self.active_image_search_id = None
+
+    def open_saved_image_search(self, search_id):
+        if search_id not in self.image_searches:
+            return
+        if self.active_image_search_id != search_id:
+            self.unload_active_image_view()
+        key = self.image_view_key(search_id)
+        web_view = self.web_views.get(key)
+        if web_view is None:
+            web_view = self.create_image_view(search_id)
+        self.active_image_search_id = search_id
+        self.current_tab = "images"
+        self.tabs.setCurrentWidget(web_view)
+        web_view.setZoomFactor(0.8)
+        self.setWindowTitle(
+            f"PremieDrop Images - {self.image_searches[search_id]['label']}"
+        )
+        self.update_tab_button_styles()
+
+    def rebuild_images_menu(self):
+        self.images_menu.clear()
+        for search_id, search in self.image_searches.items():
+            domain = urlparse(search["url"]).netloc or "images"
+            label = search["label"]
+            if len(label) > 28:
+                label = f"{label[:25]}..."
+            action = self.images_menu.addAction(
+                f"{label} — {domain}"
+            )
+            action.setToolTip(search["url"])
+            action.triggered.connect(
+                lambda _checked=False, sid=search_id:
+                self.open_saved_image_search(sid)
+            )
+        if self.image_searches:
+            self.images_menu.addSeparator()
+        new_action = self.images_menu.addAction("+ New")
+        new_action.triggered.connect(self.search_images)
 
     def switch_tab(self, tab_name):
-        if tab_name not in self.web_views:
+        if tab_name not in self.sites:
             return
+        if self.current_tab == "images":
+            self.unload_active_image_view()
         self.current_tab = tab_name
         self.tabs.setCurrentWidget(self.web_views[tab_name])
-        if tab_name == "images":
-            self.web_views["images"].setZoomFactor(0.8)
         site_name = self.sites[tab_name]["name"]
         self.setWindowTitle(f"PremieDrop - {site_name}")
+        self.update_tab_button_styles()
+
+    def update_tab_button_styles(self):
         self.youtube_tab_btn.setProperty(
-            "active", tab_name == "youtube"
+            "active", self.current_tab == "youtube"
         )
         self.myinstants_tab_btn.setProperty(
-            "active", tab_name == "myinstants"
+            "active", self.current_tab == "myinstants"
         )
         self.images_tab_btn.setProperty(
-            "active", tab_name == "images"
+            "active", self.current_tab == "images"
         )
         for button in (
             self.youtube_tab_btn,
@@ -313,9 +431,43 @@ class YouTubeBrowserWindow(QWidget):
             os.remove(self.command_path)
         except (OSError, ValueError):
             return
-        self.switch_tab(command.get("tab", ""))
+        tab_name = command.get("tab", "")
+        self.attached = True
+        self.attach_btn.setText("Pop Out")
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.publish_attachment_status()
+        QTimer.singleShot(100, self.sync_with_premiedrop)
+        if command.get("search_images"):
+            if self.image_searches:
+                latest_search_id = max(self.image_searches)
+                QTimer.singleShot(
+                    0,
+                    lambda sid=latest_search_id:
+                    self.open_saved_image_search(sid)
+                )
+            else:
+                QTimer.singleShot(0, self.search_images)
+        else:
+            self.switch_tab(tab_name)
 
-    def send_download_request(self, url=None):
+    def hide_browser_panel(self):
+        if self.current_tab == "images":
+            self.unload_active_image_view()
+        self.hide()
+        self.attached = False
+        self.attach_btn.setText("Attach to PremieDrop")
+        self.publish_attachment_status()
+
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide_browser_panel()
+
+    def send_download_request(
+        self, url=None, request_type="", suggested_filename="",
+        mime_type="", referer=""
+    ):
         if not isinstance(url, str) or not url:
             url = self.current_web_view().url().toString()
         QApplication.clipboard().setText(url)
@@ -325,6 +477,10 @@ class YouTubeBrowserWindow(QWidget):
         temporary_path = f"{self.request_path}.tmp"
         request = {
             "url": url,
+            "request_type": request_type,
+            "suggested_filename": suggested_filename,
+            "mime_type": mime_type,
+            "referer": referer,
             "cursor_x": cursor_position.x(),
             "cursor_y": cursor_position.y(),
             "created_at": time.time(),
@@ -339,6 +495,21 @@ class YouTubeBrowserWindow(QWidget):
                 "Could Not Send URL",
                 f"PremieDrop could not receive this URL:\n\n{exc}"
             )
+
+    def handle_browser_download(self, download_item):
+        url = download_item.url().toString()
+        suggested_filename = download_item.suggestedFileName()
+        mime_type = download_item.mimeType()
+        page = download_item.page()
+        referer = page.url().toString() if page is not None else ""
+        download_item.cancel()
+        self.send_download_request(
+            url,
+            request_type="direct",
+            suggested_filename=suggested_filename,
+            mime_type=mime_type,
+            referer=referer,
+        )
 
     def toggle_attachment(self):
         self.attached = not self.attached
@@ -478,6 +649,18 @@ class YouTubeBrowserWindow(QWidget):
             else f"PremieDrop - {site_name}"
         )
 
+    def update_image_page_title(self, search_id, title):
+        if (
+            self.current_tab != "images"
+            or self.active_image_search_id != search_id
+        ):
+            return
+        label = self.image_searches[search_id]["label"]
+        self.setWindowTitle(
+            f"{title} - PremieDrop Images" if title
+            else f"PremieDrop Images - {label}"
+        )
+
 
 def main():
     if len(sys.argv) < 9:
@@ -507,7 +690,10 @@ def main():
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     import_error = None
     try:
-        from PyQt5.QtWebEngineWidgets import QWebEngineView
+        from PyQt5.QtWebEngineWidgets import (
+            QWebEngineContextMenuData,
+            QWebEngineView,
+        )
     except (ImportError, OSError) as exc:
         import_error = exc
         QWebEngineView = None
@@ -531,9 +717,13 @@ def main():
     class PremieDropWebView(QWebEngineView):
         def contextMenuEvent(self, event):
             context_data = self.page().contextMenuData()
-            target_url = (
-                context_data.linkUrl().toString()
-                or context_data.mediaUrl().toString()
+            link_url = context_data.linkUrl().toString()
+            media_url = context_data.mediaUrl().toString()
+            target_url = link_url or media_url
+            is_image = (
+                context_data.mediaType()
+                == QWebEngineContextMenuData.MediaTypeImage
+                and bool(media_url)
             )
             menu = self.page().createStandardContextMenu()
             menu.setStyleSheet("""
@@ -562,14 +752,54 @@ def main():
                     margin: 5px 8px;
                 }
             """)
+            for action in list(menu.actions()):
+                if action.text().lower().startswith("save image"):
+                    menu.removeAction(action)
+
+            save_image_action = None
+            if is_image:
+                image_filename = os.path.basename(
+                    urlparse(media_url).path
+                )
+                image_mime = (
+                    mimetypes.guess_type(image_filename)[0] or "image/"
+                )
+                save_image_action = QAction("Save Image", menu)
+                save_image_action.triggered.connect(
+                    lambda _checked=False, url=media_url,
+                    filename=image_filename, mime=image_mime:
+                    self.window().send_download_request(
+                        url,
+                        request_type="direct",
+                        suggested_filename=filename,
+                        mime_type=mime,
+                        referer=self.url().toString(),
+                    )
+                )
+
             copy_action = QAction("Copy URL to PremieDrop", menu)
             copy_action.setEnabled(bool(target_url))
             copy_action.triggered.connect(
-                lambda _checked=False, url=target_url:
-                self.window().send_download_request(url)
+                lambda _checked=False, url=target_url,
+                direct=bool(media_url) or self.property("tab_name") == "images":
+                self.window().send_download_request(
+                    url,
+                    request_type="direct" if direct else "",
+                    suggested_filename=os.path.basename(
+                        urlparse(url).path
+                    ),
+                    referer=self.url().toString(),
+                )
             )
             first_action = menu.actions()[0] if menu.actions() else None
-            if first_action is None:
+            if save_image_action is not None and first_action is not None:
+                menu.insertAction(first_action, save_image_action)
+                menu.insertAction(first_action, copy_action)
+                menu.insertSeparator(first_action)
+            elif save_image_action is not None:
+                menu.addAction(save_image_action)
+                menu.addAction(copy_action)
+            elif first_action is None:
                 menu.addAction(copy_action)
             else:
                 menu.insertAction(first_action, copy_action)

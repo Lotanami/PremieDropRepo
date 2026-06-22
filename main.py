@@ -5,6 +5,10 @@ import shutil
 import platform
 import hashlib
 import subprocess
+import re
+import mimetypes
+from urllib.parse import unquote, urlparse
+from urllib.request import Request, urlopen
 from datetime import datetime, timezone
 
 from PyQt5.QtWidgets import (
@@ -19,7 +23,7 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtGui import (
     QIcon, QColor, QFont, QDrag, QPalette, QPixmap, QPainter, QPen,
-    QKeySequence, QPolygon, QCursor
+    QKeySequence, QPolygon, QCursor, QMovie
 )
 
 try:
@@ -99,7 +103,7 @@ def scaled_image_preview_value(value, minimum=1):
 SUPPORTED_EXTENSIONS = {
     "video": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v"],
     "audio": [".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".aiff"],
-    "image": [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff"],
+    "image": [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".webp"],
 }
 
 ALL_EXTENSIONS = [ext for exts in SUPPORTED_EXTENSIONS.values() for ext in exts]
@@ -110,6 +114,22 @@ def get_file_type(path):
         if ext in exts:
             return ftype
     return "other"
+
+def direct_download_section(filename="", mime_type=""):
+    extension = os.path.splitext(filename)[1].lower()
+    if extension in SUPPORTED_EXTENSIONS["image"] or mime_type.startswith("image/"):
+        return "Images/GIFs"
+    if extension in SUPPORTED_EXTENSIONS["audio"] or mime_type.startswith("audio/"):
+        return "Sound effects (.mp3 etc)"
+    if extension in SUPPORTED_EXTENSIONS["video"] or mime_type.startswith("video/"):
+        return "Short Video Files (1GB<)"
+    return ""
+
+def looks_like_direct_download(url, filename="", mime_type=""):
+    if direct_download_section(filename, mime_type):
+        return True
+    extension = os.path.splitext(urlparse(url).path)[1].lower()
+    return extension in ALL_EXTENSIONS
 
 def get_file_icon(ftype):
     icons = {
@@ -1172,6 +1192,7 @@ class ImagePreview(QWidget):
         super().__init__(parent)
         self.current_path = ""
         self.source_pixmap = QPixmap()
+        self.movie = None
         self.setObjectName("image_preview")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet("""
@@ -1239,6 +1260,28 @@ class ImagePreview(QWidget):
         )
 
     def load_image(self, path):
+        self.stop_movie()
+        if os.path.splitext(path)[1].lower() == ".gif":
+            movie = QMovie(path)
+            movie.setCacheMode(QMovie.CacheAll)
+            if not movie.isValid() or not movie.jumpToFrame(0):
+                QMessageBox.warning(
+                    self, "Image Preview", "This GIF could not be loaded."
+                )
+                return False
+            self.current_path = path
+            self.movie = movie
+            self.source_pixmap = movie.currentPixmap()
+            self.apply_scale_settings()
+            self.name_label.setText(os.path.basename(path))
+            self.name_label.setToolTip(path)
+            self.resize_to_image()
+            self.image_surface.setMovie(movie)
+            self.show()
+            QTimer.singleShot(0, self.update_scaled_image)
+            movie.start()
+            return True
+
         pixmap = QPixmap(path)
         if pixmap.isNull():
             QMessageBox.warning(self, "Image Preview", "This image could not be loaded.")
@@ -1288,6 +1331,9 @@ class ImagePreview(QWidget):
         target = self.image_surface.size()
         if target.width() <= 0 or target.height() <= 0:
             return
+        if self.movie is not None:
+            self.movie.setScaledSize(target)
+            return
         self.image_surface.setPixmap(
             self.source_pixmap.scaled(
                 target,
@@ -1301,10 +1347,19 @@ class ImagePreview(QWidget):
         self.update_scaled_image()
 
     def hide_for_switch(self):
+        self.stop_movie()
         self.current_path = ""
         self.source_pixmap = QPixmap()
         self.image_surface.clear()
         self.hide()
+
+    def stop_movie(self):
+        if self.movie is not None:
+            self.movie.stop()
+            self.image_surface.setMovie(None)
+            self.movie.setFileName("")
+            self.movie.deleteLater()
+            self.movie = None
 
     def close_preview(self):
         self.hide_for_switch()
@@ -1376,8 +1431,15 @@ class ArrowComboBox(QComboBox):
 class DownloadDialog(QDialog):
     """Collect URL download settings without blocking the main UI."""
 
-    def __init__(self, sections, default_folder, parent=None, initial_url=""):
+    def __init__(
+        self, sections, default_folder, parent=None, initial_url="",
+        direct_file=False, suggested_filename="", mime_type="", referer=""
+    ):
         super().__init__(parent)
+        self.direct_file = direct_file
+        self.suggested_filename = suggested_filename
+        self.mime_type = mime_type
+        self.referer = referer
         self.setWindowTitle("Download Media")
         self.setMinimumWidth(430)
         self.setStyleSheet("""
@@ -1480,7 +1542,11 @@ class DownloadDialog(QDialog):
         mode_col = QVBoxLayout()
         mode_col.addWidget(QLabel("Download as"))
         self.mode_combo = ArrowComboBox()
-        self.mode_combo.addItems(["Video (MP4)", "Audio (MP3)"])
+        if direct_file:
+            self.mode_combo.addItem("Original file")
+            self.mode_combo.setEnabled(False)
+        else:
+            self.mode_combo.addItems(["Video (MP4)", "Audio (MP3)"])
         self.mode_combo.currentIndexChanged.connect(self.update_mode)
         mode_col.addWidget(self.mode_combo)
 
@@ -1536,6 +1602,18 @@ class DownloadDialog(QDialog):
             self.folder_input.setText(folder)
 
     def update_mode(self):
+        if self.direct_file:
+            self.quality_combo.clear()
+            self.quality_combo.addItem("Original")
+            self.quality_combo.setEnabled(False)
+            preferred = direct_download_section(
+                self.suggested_filename, self.mime_type
+            )
+            index = self.section_combo.findText(preferred)
+            if index >= 0:
+                self.section_combo.setCurrentIndex(index)
+            return
+
         is_audio = self.mode_combo.currentIndex() == 1
         self.quality_combo.clear()
         if is_audio:
@@ -1568,6 +1646,10 @@ class DownloadDialog(QDialog):
         return {
             "url": self.url_input.text().strip(),
             "folder": os.path.normpath(self.folder_input.text().strip()),
+            "download_type": "direct" if self.direct_file else "media",
+            "suggested_filename": self.suggested_filename,
+            "mime_type": self.mime_type,
+            "referer": self.referer,
             "mode": "audio" if self.mode_combo.currentIndex() == 1 else "video",
             "quality": self.quality_combo.currentText(),
             "section": self.section_combo.currentText(),
@@ -1681,6 +1763,109 @@ class DownloadWorker(QThread):
                 raise FileNotFoundError("The download completed but its output file was not found.")
             self.completed.emit(output_path, settings["section"])
         except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class DirectFileDownloadWorker(QThread):
+    progress = pyqtSignal(int, str)
+    completed = pyqtSignal(str, str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+
+    def safe_filename(self, name):
+        name = unquote(name or "").strip()
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
+        name = name.rstrip(". ")
+        return name[:180] or "download"
+
+    def response_filename(self, response):
+        content_disposition = response.headers.get(
+            "Content-Disposition", ""
+        )
+        encoded_match = re.search(
+            r"filename\\*=UTF-8''([^;]+)", content_disposition, re.I
+        )
+        if encoded_match:
+            return unquote(encoded_match.group(1))
+        quoted_match = re.search(
+            r'filename="?([^";]+)"?', content_disposition, re.I
+        )
+        if quoted_match:
+            return quoted_match.group(1)
+        return ""
+
+    def unique_path(self, folder, filename):
+        base, extension = os.path.splitext(filename)
+        candidate = os.path.join(folder, filename)
+        number = 2
+        while os.path.exists(candidate):
+            candidate = os.path.join(
+                folder, f"{base} ({number}){extension}"
+            )
+            number += 1
+        return candidate
+
+    def run(self):
+        settings = self.settings
+        output_path = ""
+        try:
+            request = Request(
+                settings["url"],
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 Chrome/124 Safari/537.36"
+                    ),
+                    "Accept": "*/*",
+                    **(
+                        {"Referer": settings["referer"]}
+                        if settings.get("referer") else {}
+                    ),
+                },
+            )
+            with urlopen(request, timeout=45) as response:
+                response_mime = response.headers.get_content_type()
+                if response_mime in ("text/html", "application/xhtml+xml"):
+                    raise ValueError(
+                        "This link points to a webpage, not a downloadable file."
+                    )
+                filename = (
+                    settings.get("suggested_filename")
+                    or self.response_filename(response)
+                    or os.path.basename(urlparse(response.url).path)
+                    or "download"
+                )
+                filename = self.safe_filename(filename)
+                if not os.path.splitext(filename)[1]:
+                    extension = mimetypes.guess_extension(response_mime) or ""
+                    if extension == ".jpe":
+                        extension = ".jpg"
+                    filename += extension
+                output_path = self.unique_path(settings["folder"], filename)
+                total = int(response.headers.get("Content-Length", 0) or 0)
+                downloaded = 0
+                with open(output_path, "wb") as output_file:
+                    while True:
+                        chunk = response.read(256 * 1024)
+                        if not chunk:
+                            break
+                        output_file.write(chunk)
+                        downloaded += len(chunk)
+                        percent = int(downloaded * 100 / total) if total else 0
+                        self.progress.emit(
+                            percent,
+                            f"Downloading {filename}"
+                        )
+            self.completed.emit(output_path, settings["section"])
+        except Exception as exc:
+            if output_path and os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
             self.failed.emit(str(exc))
 
 
@@ -1931,29 +2116,33 @@ class MainWindow(QMainWindow):
             QPushButton#download_btn:hover {
                 background-color: #35619c;
             }
-            QPushButton#youtube_btn {
-                background-color: #b3261e;
+            QPushButton#web_btn {
+                background-color: #4b356f;
                 color: #ffffff;
-                border: 1px solid #e0443a;
+                border: 1px solid #6b4d99;
                 border-radius: 8px;
                 padding: 8px 10px;
                 font-size: 12px;
                 font-weight: bold;
             }
-            QPushButton#youtube_btn:hover {
-                background-color: #d62d24;
+            QPushButton#web_btn:hover {
+                background-color: #60448c;
             }
-            QPushButton#myinstants_btn {
-                background-color: #d35400;
+            QMenu#web_menu {
+                background-color: #16213e;
+                color: #eeeeff;
+                border: 1px solid #51517f;
+                padding: 5px;
+            }
+            QMenu#web_menu::item {
+                min-width: 150px;
+                padding: 8px 22px 8px 12px;
+                border-radius: 5px;
+            }
+            QMenu#web_menu::item:selected {
+                background-color: #6C63FF;
                 color: #ffffff;
-                border: 1px solid #f39c12;
-                border-radius: 8px;
-                padding: 8px 8px;
-                font-size: 11px;
                 font-weight: bold;
-            }
-            QPushButton#myinstants_btn:hover {
-                background-color: #e67e22;
             }
             QPushButton#add_btn {
                 background-color: #6C63FF;
@@ -2198,6 +2387,30 @@ class MainWindow(QMainWindow):
         folder_row.addWidget(set_folder_btn)
         layout.addLayout(folder_row)
 
+        folder_tools_row = QHBoxLayout()
+        folder_tools_row.setSpacing(6)
+        folder_tools_row.addStretch()
+
+        self.auto_organize_btn = QPushButton("Auto Organize")
+        self.auto_organize_btn.setObjectName("set_folder_btn")
+        self.auto_organize_btn.setToolTip(
+            "Move loose media in the project folder into preset section folders"
+        )
+        self.auto_organize_btn.clicked.connect(self.auto_organize_assets)
+        self.auto_organize_btn.setFixedHeight(30)
+
+        self.reload_assets_btn = QPushButton("Reload Assets")
+        self.reload_assets_btn.setObjectName("set_folder_btn")
+        self.reload_assets_btn.setToolTip(
+            "Rescan preset section folders into the PremieDrop library"
+        )
+        self.reload_assets_btn.clicked.connect(self.reload_assets)
+        self.reload_assets_btn.setFixedHeight(30)
+
+        folder_tools_row.addWidget(self.auto_organize_btn)
+        folder_tools_row.addWidget(self.reload_assets_btn)
+        layout.addLayout(folder_tools_row)
+
         # ── Buttons ──────────────────────────────────────────────────
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
@@ -2219,19 +2432,20 @@ class MainWindow(QMainWindow):
         download_btn.setFixedHeight(42)
         download_btn.setFixedWidth(54)
 
-        youtube_btn = QPushButton("YouTube")
-        youtube_btn.setObjectName("youtube_btn")
-        youtube_btn.setToolTip("Open YouTube inside PremieDrop")
-        youtube_btn.clicked.connect(self.open_youtube_browser)
-        youtube_btn.setFixedHeight(42)
-        youtube_btn.setFixedWidth(76)
-
-        myinstants_btn = QPushButton("MyInstants")
-        myinstants_btn.setObjectName("myinstants_btn")
-        myinstants_btn.setToolTip("Open MyInstants inside PremieDrop")
-        myinstants_btn.clicked.connect(self.open_myinstants_browser)
-        myinstants_btn.setFixedHeight(42)
-        myinstants_btn.setFixedWidth(82)
+        web_btn = QPushButton("Web")
+        web_btn.setObjectName("web_btn")
+        web_btn.setToolTip("Open the persistent media browser")
+        web_btn.setFixedHeight(42)
+        web_btn.setFixedWidth(78)
+        web_menu = QMenu(web_btn)
+        web_menu.setObjectName("web_menu")
+        youtube_action = web_menu.addAction("YouTube")
+        youtube_action.triggered.connect(self.open_youtube_browser)
+        myinstants_action = web_menu.addAction("MyInstants")
+        myinstants_action.triggered.connect(self.open_myinstants_browser)
+        images_action = web_menu.addAction("Image Search")
+        images_action.triggered.connect(self.open_image_search)
+        web_btn.setMenu(web_menu)
 
         self.copy_btn = QPushButton("Import All to Premiere")
         self.copy_btn.setObjectName("copy_btn")
@@ -2255,8 +2469,7 @@ class MainWindow(QMainWindow):
         browser_row = QHBoxLayout()
         browser_row.setSpacing(6)
         browser_row.addStretch()
-        browser_row.addWidget(youtube_btn)
-        browser_row.addWidget(myinstants_btn)
+        browser_row.addWidget(web_btn)
         layout.addLayout(browser_row)
 
         # Set initial folder label state
@@ -2269,6 +2482,9 @@ class MainWindow(QMainWindow):
 
     def open_myinstants_browser(self):
         self.open_media_browser("myinstants")
+
+    def open_image_search(self):
+        self.open_media_browser("images")
 
     def open_media_browser(self, tab_name):
         if (
@@ -2334,6 +2550,7 @@ class MainWindow(QMainWindow):
         temporary_path = f"{YOUTUBE_BROWSER_COMMAND_FILE}.tmp"
         command = {
             "tab": tab_name,
+            "search_images": tab_name == "images",
             "created_at": datetime.now(timezone.utc).timestamp(),
         }
         try:
@@ -2415,7 +2632,14 @@ class MainWindow(QMainWindow):
                 )
             except (KeyError, TypeError, ValueError):
                 pass
-            self.open_download_dialog(url, cursor_position)
+            self.open_download_dialog(
+                url,
+                cursor_position,
+                request_type=request.get("request_type", ""),
+                suggested_filename=request.get("suggested_filename", ""),
+                mime_type=request.get("mime_type", ""),
+                referer=request.get("referer", ""),
+            )
 
     def check_youtube_browser_status(self):
         if not os.path.isfile(YOUTUBE_BROWSER_STATUS_FILE):
@@ -2455,7 +2679,10 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
 
-    def open_download_dialog(self, initial_url="", cursor_position=None):
+    def open_download_dialog(
+        self, initial_url="", cursor_position=None, request_type="",
+        suggested_filename="", mime_type="", referer=""
+    ):
         if not isinstance(initial_url, str):
             initial_url = ""
         if self.download_worker is not None and self.download_worker.isRunning():
@@ -2465,7 +2692,13 @@ class MainWindow(QMainWindow):
                 "Wait for the current download to finish."
             )
             return
-        if yt_dlp is None:
+        direct_file = (
+            request_type == "direct"
+            or looks_like_direct_download(
+                initial_url, suggested_filename, mime_type
+            )
+        )
+        if not direct_file and yt_dlp is None:
             QMessageBox.information(
                 self,
                 "yt-dlp Required",
@@ -2485,7 +2718,11 @@ class MainWindow(QMainWindow):
             self.sections,
             default_folder,
             self,
-            initial_url=initial_url
+            initial_url=initial_url,
+            direct_file=direct_file,
+            suggested_filename=suggested_filename,
+            mime_type=mime_type,
+            referer=referer,
         )
         dialog.adjustSize()
         if not isinstance(cursor_position, QPoint):
@@ -2509,7 +2746,12 @@ class MainWindow(QMainWindow):
         self.download_status.setText("Starting download...")
         self.download_progress_row.show()
 
-        self.download_worker = DownloadWorker(dialog.settings(), self)
+        worker_class = (
+            DirectFileDownloadWorker
+            if dialog.settings()["download_type"] == "direct"
+            else DownloadWorker
+        )
+        self.download_worker = worker_class(dialog.settings(), self)
         self.download_worker.progress.connect(self.update_download_progress)
         self.download_worker.completed.connect(self.download_completed)
         self.download_worker.failed.connect(self.download_failed)
@@ -2703,7 +2945,10 @@ class MainWindow(QMainWindow):
             self.update_folder_label()
 
     def update_folder_label(self):
-        if self.project_folder and os.path.exists(self.project_folder):
+        folder_active = bool(
+            self.project_folder and os.path.exists(self.project_folder)
+        )
+        if folder_active:
             name = os.path.basename(self.project_folder)
             self.folder_label.setText(f"→  {name}")
             self.folder_label.setToolTip(self.project_folder)
@@ -2718,6 +2963,146 @@ class MainWindow(QMainWindow):
             self.folder_label.setStyleSheet("color: #555577; font-size: 11px; font-style: italic;")
             self.copy_btn.setEnabled(False)
             self.copy_btn.setToolTip("")
+        self.auto_organize_btn.setEnabled(folder_active)
+        self.reload_assets_btn.setEnabled(folder_active)
+
+    def preset_section_folders(self):
+        return {
+            name: os.path.join(self.project_folder, safe_folder_name(name))
+            for name in DEFAULT_SECTIONS
+        }
+
+    def unique_destination(self, folder, filename):
+        base, extension = os.path.splitext(filename)
+        destination = os.path.join(folder, filename)
+        number = 2
+        while os.path.exists(destination):
+            destination = os.path.join(
+                folder, f"{base} ({number}){extension}"
+            )
+            number += 1
+        return destination
+
+    def auto_organize_assets(self):
+        if not self.project_folder or not os.path.isdir(self.project_folder):
+            QMessageBox.warning(
+                self, "No Folder Set", "Please set a project folder first."
+            )
+            return
+
+        preset_folders = self.preset_section_folders()
+        for folder in preset_folders.values():
+            os.makedirs(folder, exist_ok=True)
+
+        moved = 0
+        failed = 0
+        replacements = {}
+        try:
+            root_entries = list(os.scandir(self.project_folder))
+        except OSError as exc:
+            QMessageBox.warning(self, "Auto Organize Failed", str(exc))
+            return
+
+        for entry in root_entries:
+            if not entry.is_file():
+                continue
+            source = os.path.normpath(entry.path)
+            if os.path.splitext(source)[1].lower() not in ALL_EXTENSIONS:
+                continue
+            section_name = section_for_file(source)
+            destination_folder = preset_folders.get(section_name)
+            if destination_folder is None:
+                continue
+            destination = self.unique_destination(
+                destination_folder, entry.name
+            )
+            try:
+                shutil.move(source, destination)
+                replacements[
+                    os.path.normcase(os.path.abspath(source))
+                ] = os.path.normpath(destination)
+                moved += 1
+            except OSError:
+                failed += 1
+
+        if replacements:
+            for section in self.sections:
+                section["files"] = [
+                    replacements.get(
+                        os.path.normcase(os.path.abspath(path)), path
+                    )
+                    for path in section["files"]
+                ]
+
+        added = self.reload_assets(show_message=False)
+        QMessageBox.information(
+            self,
+            "Auto Organize Complete",
+            f"{moved} file{'s' if moved != 1 else ''} organized, "
+            f"{added} asset{'s' if added != 1 else ''} reloaded"
+            + (f", {failed} failed." if failed else ".")
+        )
+
+    def reload_assets(self, show_message=True):
+        if not self.project_folder or not os.path.isdir(self.project_folder):
+            if show_message:
+                QMessageBox.warning(
+                    self, "No Folder Set", "Please set a project folder first."
+                )
+            return 0
+
+        preset_folders = self.preset_section_folders()
+        managed_roots = {
+            os.path.normcase(os.path.abspath(folder))
+            for folder in preset_folders.values()
+        }
+        discovered_by_section = {}
+        for section_name, folder in preset_folders.items():
+            os.makedirs(folder, exist_ok=True)
+            discovered = []
+            for root, _directories, filenames in os.walk(folder):
+                for filename in filenames:
+                    path = os.path.normpath(os.path.join(root, filename))
+                    if os.path.splitext(path)[1].lower() in ALL_EXTENSIONS:
+                        discovered.append(path)
+            discovered_by_section[section_name] = discovered
+
+        before = {
+            os.path.normcase(os.path.abspath(path))
+            for path in self.all_files()
+        }
+        for section in self.sections:
+            discovered = discovered_by_section.get(section["name"])
+            if discovered is None:
+                continue
+            external_files = []
+            for path in section["files"]:
+                absolute = os.path.normcase(os.path.abspath(path))
+                inside_managed = any(
+                    absolute == root or absolute.startswith(root + os.sep)
+                    for root in managed_roots
+                )
+                if not inside_managed and os.path.exists(path):
+                    external_files.append(path)
+            section["files"] = external_files + [
+                path for path in discovered if path not in external_files
+            ]
+
+        after = {
+            os.path.normcase(os.path.abspath(path))
+            for path in self.all_files()
+        }
+        added = len(after - before)
+        self.save_library()
+        self.populate_list()
+        if show_message:
+            QMessageBox.information(
+                self,
+                "Assets Reloaded",
+                f"{added} new asset{'s' if added != 1 else ''} loaded from "
+                "the preset folders."
+            )
+        return added
 
     def copy_new_to_project(self):
         if not self.project_folder or not os.path.exists(self.project_folder):

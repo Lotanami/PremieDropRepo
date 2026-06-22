@@ -201,7 +201,7 @@ class YouTubeBrowserWindow(QWidget):
         self.images_tab_btn = QPushButton("🔍")
         self.images_tab_btn.setObjectName("images_home")
         self.images_tab_btn.setToolTip("Open saved image searches")
-        self.images_tab_btn.setFixedWidth(42)
+        self.images_tab_btn.setFixedWidth(72)
         self.images_menu = QMenu(self.images_tab_btn)
         self.images_menu.setToolTipsVisible(True)
         self.images_menu.aboutToShow.connect(self.rebuild_images_menu)
@@ -221,10 +221,15 @@ class YouTubeBrowserWindow(QWidget):
 
         controls.addStretch()
 
-        download_btn = QPushButton("Download Current URL")
-        download_btn.setObjectName("youtube_download")
-        download_btn.clicked.connect(self.send_download_request)
-        controls.addWidget(download_btn)
+        self.download_btn = QPushButton("DL URL")
+        self.download_btn.setObjectName("youtube_download")
+        self.download_btn.setToolTip(
+            "Open the current YouTube URL in PremieDrop's downloader"
+        )
+        self.download_btn.setFixedWidth(58)
+        self.download_btn.setStyleSheet("font-size: 10px; padding: 0px 6px;")
+        self.download_btn.clicked.connect(self.send_download_request)
+        controls.addWidget(self.download_btn)
         layout.addLayout(controls)
 
         self.tabs = QStackedWidget(self)
@@ -364,6 +369,7 @@ class YouTubeBrowserWindow(QWidget):
             web_view = self.create_image_view(search_id)
         self.active_image_search_id = search_id
         self.current_tab = "images"
+        self.download_btn.hide()
         self.tabs.setCurrentWidget(web_view)
         web_view.setZoomFactor(0.8)
         self.setWindowTitle(
@@ -397,6 +403,7 @@ class YouTubeBrowserWindow(QWidget):
         if self.current_tab == "images":
             self.unload_active_image_view()
         self.current_tab = tab_name
+        self.download_btn.setVisible(tab_name == "youtube")
         self.tabs.setCurrentWidget(self.web_views[tab_name])
         site_name = self.sites[tab_name]["name"]
         self.setWindowTitle(f"PremieDrop - {site_name}")

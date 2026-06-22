@@ -786,6 +786,7 @@ class VideoPreview(QWidget):
         self.current_is_video = False
         self.fullscreen_window = None
         self.user_seeking = False
+        self.video_size_attempts = 0
         self.setObjectName("video_preview")
         self.setAttribute(Qt.WA_StyledBackground, True)
         if self.standalone:
@@ -1018,10 +1019,60 @@ class VideoPreview(QWidget):
         self.player.play()
         self.set_playing_icon(True)
         self.timer.start()
+        if show_video and self.standalone:
+            self.video_size_attempts = 0
+            QTimer.singleShot(100, self.lock_video_minimum_size)
         return True
 
     def load_video(self, path):
         return self.load_media(path, show_video=True)
+
+    def lock_video_minimum_size(self):
+        if (
+            not self.standalone
+            or not self.current_is_video
+            or self.player is None
+        ):
+            return
+        try:
+            video_width, video_height = self.player.video_get_size(0)
+        except Exception:
+            video_width, video_height = 0, 0
+
+        if video_width <= 0 or video_height <= 0:
+            self.video_size_attempts += 1
+            if self.video_size_attempts < 30:
+                QTimer.singleShot(150, self.lock_video_minimum_size)
+            return
+
+        margins = self.preview_layout.contentsMargins()
+        title_height = max(
+            self.name_label.sizeHint().height(),
+            self.close_btn.height(),
+            self.escape_hint.sizeHint().height(),
+        )
+        controls_height = self.controls.sizeHint().height()
+        vertical_spacing = self.preview_layout.spacing() * 2
+        preview_width = max(1, round(video_width * 0.25))
+        preview_height = max(1, round(video_height * 0.25))
+        minimum_width = (
+            preview_width + margins.left() + margins.right()
+        )
+        minimum_height = (
+            preview_height
+            + title_height
+            + controls_height
+            + margins.top()
+            + margins.bottom()
+            + vertical_spacing
+        )
+
+        self.video_surface.setMinimumSize(preview_width, preview_height)
+        self.setMinimumSize(minimum_width, minimum_height)
+        self.resize(
+            max(self.width(), minimum_width),
+            max(self.height(), minimum_height),
+        )
 
     def load_audio(self, path):
         return self.load_media(path, show_video=False)

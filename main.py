@@ -7,9 +7,14 @@ import hashlib
 import subprocess
 import re
 import mimetypes
+import importlib.util
+import xml.etree.ElementTree as ET
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 from datetime import datetime, timezone
+
+from premiedrop_ext import ImportContext, ImportRegistry, UIExtensionRegistry
+from premiedrop_ext.ui_config import APP_TEXT, UI_SIZES, THEME
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -63,6 +68,9 @@ YOUTUBE_BROWSER_COMMAND_FILE = os.path.join(
     APP_DATA_DIR, "youtube_browser_command.json"
 )
 PRESETS_FILE = os.path.join(APP_DATA_DIR, "library_presets.json")
+EDITOR_SETTINGS_FILE = os.path.join(
+    APP_DATA_DIR, "editor_import_settings.json"
+)
 VIDEO_THUMB_DIR = os.path.join(os.path.dirname(__file__), "thumbnail_cache")
 THUMB_SIZE = 112
 LARGE_VIDEO_BYTES = 1 * 1024 * 1024 * 1024
@@ -82,8 +90,8 @@ SECTION_NAME_ALIASES = {
     "Short Video Files (1Gb<)": "Short Video Files (1GB<)",
 }
 
-BASE_WINDOW_WIDTH = 650
-BASE_WINDOW_HEIGHT = 800
+BASE_WINDOW_WIDTH = UI_SIZES["base_window_width"]
+BASE_WINDOW_HEIGHT = UI_SIZES["base_window_height"]
 YOUTUBE_PANEL_MIN_WIDTH = 520
 YOUTUBE_PANEL_PREFERRED_WIDTH = 900
 ATTACHED_BROWSER_WINDOW_WIDTH = 1250
@@ -275,6 +283,228 @@ def safe_folder_name(name):
     cleaned = "".join("_" if char in invalid else char for char in name).strip()
     return cleaned.rstrip(". ") or "Section"
 
+
+def media_duration_frames(path, frame_rate=24):
+    if get_file_type(path) == "image" and not path.lower().endswith(".gif"):
+        return frame_rate * 5
+    ffmpeg_path = get_ffmpeg_path()
+    if ffmpeg_path:
+        creation_flags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            if os.name == "nt" else 0
+        )
+        try:
+            result = subprocess.run(
+                [ffmpeg_path, "-hide_banner", "-i", path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                errors="replace",
+                timeout=15,
+                creationflags=creation_flags,
+            )
+            match = re.search(
+                r"Duration:\s*(\d+):(\d+):([\d.]+)",
+                result.stderr,
+            )
+            if match:
+                hours, minutes, seconds = match.groups()
+                total_seconds = (
+                    int(hours) * 3600
+                    + int(minutes) * 60
+                    + float(seconds)
+                )
+                return max(1, round(total_seconds * frame_rate))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    return frame_rate * 5
+
+
+def fcpxml_time(frames, frame_rate=24):
+    return f"{max(1, int(frames))}/{frame_rate}s"
+
+
+def write_davinci_fcpxml(path, sections, frame_rate=24):
+    root = ET.Element("fcpxml", {"version": "1.10"})
+    resources = ET.SubElement(root, "resources")
+    format_id = "r1"
+    ET.SubElement(
+        resources,
+        "format",
+        {
+            "id": format_id,
+            "name": "FFVideoFormat1080p24",
+            "frameDuration": f"1/{frame_rate}s",
+            "width": "1920",
+            "height": "1080",
+            "colorSpace": "1-1-1 (Rec. 709)",
+        },
+    )
+
+    timeline_items = []
+    asset_number = 2
+    total_frames = 0
+    for section in sections:
+        first_in_section = True
+        for media_path in section["files"]:
+            duration_frames = media_duration_frames(
+                media_path, frame_rate
+            )
+            asset_id = f"r{asset_number}"
+            asset_number += 1
+            media_type = get_file_type(media_path)
+            asset_attributes = {
+                "id": asset_id,
+                "name": os.path.basename(media_path),
+                "start": "0s",
+                "duration": fcpxml_time(duration_frames, frame_rate),
+            }
+            if media_type in ("video", "image"):
+                asset_attributes["hasVideo"] = "1"
+                asset_attributes["format"] = format_id
+            if media_type in ("video", "audio"):
+                asset_attributes["hasAudio"] = "1"
+            asset = ET.SubElement(
+                resources, "asset", asset_attributes
+            )
+            ET.SubElement(
+                asset,
+                "media-rep",
+                {
+                    "kind": "original-media",
+                    "src": bytes(
+                        QUrl.fromLocalFile(
+                            os.path.abspath(media_path)
+                        ).toEncoded()
+                    ).decode("ascii"),
+                },
+            )
+            timeline_items.append({
+                "asset_id": asset_id,
+                "name": os.path.basename(media_path),
+                "duration_frames": duration_frames,
+                "offset_frames": total_frames,
+                "section": section["name"] if first_in_section else "",
+            })
+            first_in_section = False
+            total_frames += duration_frames
+
+    library = ET.SubElement(root, "library")
+    event = ET.SubElement(library, "event", {"name": "PremieDrop"})
+    project = ET.SubElement(
+        event, "project", {"name": "PremieDrop Import"}
+    )
+    sequence = ET.SubElement(
+        project,
+        "sequence",
+        {
+            "format": format_id,
+            "duration": fcpxml_time(total_frames, frame_rate),
+            "tcStart": "0s",
+            "tcFormat": "NDF",
+            "audioLayout": "stereo",
+            "audioRate": "48k",
+        },
+    )
+    spine = ET.SubElement(sequence, "spine")
+    for item in timeline_items:
+        clip = ET.SubElement(
+            spine,
+            "asset-clip",
+            {
+                "ref": item["asset_id"],
+                "offset": fcpxml_time(
+                    item["offset_frames"], frame_rate
+                ) if item["offset_frames"] else "0s",
+                "name": item["name"],
+                "start": "0s",
+                "duration": fcpxml_time(
+                    item["duration_frames"], frame_rate
+                ),
+            },
+        )
+        if item["section"]:
+            ET.SubElement(
+                clip,
+                "marker",
+                {
+                    "start": "0s",
+                    "duration": f"1/{frame_rate}s",
+                    "value": item["section"],
+                },
+            )
+
+    if hasattr(ET, "indent"):
+        ET.indent(root, space="  ")
+    xml_body = ET.tostring(
+        root, encoding="unicode", short_empty_elements=True
+    )
+    with open(path, "w", encoding="utf-8", newline="\n") as xml_file:
+        xml_file.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        xml_file.write("<!DOCTYPE fcpxml>\n")
+        xml_file.write(xml_body)
+        xml_file.write("\n")
+    ET.parse(path)
+    return len(timeline_items), total_frames
+
+
+def connect_to_davinci_resolve():
+    loaded_module = sys.modules.get("DaVinciResolveScript")
+    if loaded_module is not None and hasattr(loaded_module, "scriptapp"):
+        return loaded_module.scriptapp("Resolve")
+
+    program_data = os.environ.get("PROGRAMDATA", r"C:\ProgramData")
+    api_root = os.environ.get(
+        "RESOLVE_SCRIPT_API",
+        os.path.join(
+            program_data,
+            "Blackmagic Design",
+            "DaVinci Resolve",
+            "Support",
+            "Developer",
+            "Scripting",
+        ),
+    )
+    module_path = os.path.join(
+        api_root, "Modules", "DaVinciResolveScript.py"
+    )
+    if not os.path.isfile(module_path):
+        raise RuntimeError(
+            "The DaVinci Resolve scripting module was not found."
+        )
+
+    if not os.environ.get("RESOLVE_SCRIPT_LIB"):
+        library_candidates = [
+            os.path.join(
+                os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+                "Blackmagic Design",
+                "DaVinci Resolve",
+                "fusionscript.dll",
+            ),
+            r"E:\fusionscript.dll",
+        ]
+        for library_path in library_candidates:
+            if os.path.isfile(library_path):
+                os.environ["RESOLVE_SCRIPT_LIB"] = library_path
+                break
+
+    spec = importlib.util.spec_from_file_location(
+        "DaVinciResolveScript", module_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            "The DaVinci Resolve scripting module could not be loaded."
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["DaVinciResolveScript"] = module
+    spec.loader.exec_module(module)
+    loaded_module = sys.modules.get("DaVinciResolveScript", module)
+    if not hasattr(loaded_module, "scriptapp"):
+        raise RuntimeError(
+            "The DaVinci Resolve scripting library did not initialize."
+        )
+    return loaded_module.scriptapp("Resolve")
+
 def load_sections():
     if os.path.exists(SAVE_FILE):
         try:
@@ -333,6 +563,25 @@ def save_presets(presets):
     os.makedirs(APP_DATA_DIR, exist_ok=True)
     with open(PRESETS_FILE, "w", encoding="utf-8") as preset_file:
         json.dump(presets, preset_file, indent=2)
+
+
+def load_editor_settings():
+    try:
+        with open(
+            EDITOR_SETTINGS_FILE, "r", encoding="utf-8"
+        ) as settings_file:
+            settings = json.load(settings_file)
+        return settings if isinstance(settings, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_editor_settings(settings):
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+    with open(
+        EDITOR_SETTINGS_FILE, "w", encoding="utf-8"
+    ) as settings_file:
+        json.dump(settings, settings_file, indent=2)
 
 def write_import_queue(project_folder, entries):
     os.makedirs(APP_DATA_DIR, exist_ok=True)
@@ -524,7 +773,6 @@ class AutoSortDropBox(QLabel):
                 color: #ffffff;
             }
         """)
-
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -1937,6 +2185,16 @@ class DirectFileDownloadWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        extension_root = os.path.dirname(__file__)
+        self.import_registry = ImportRegistry()
+        self.import_registry.discover(
+            os.path.join(extension_root, "import_providers")
+        )
+        self.ui_extension_registry = UIExtensionRegistry()
+        self.ui_extension_registry.discover(
+            os.path.join(extension_root, "ui_plugins")
+        )
+        self.write_extension_diagnostics()
         self.section_refresh_pending = False
         self.video_windows = []
         self.embedded_previous_size = None
@@ -2107,7 +2365,7 @@ class MainWindow(QMainWindow):
             self.setMinimumHeight(minimum_height)
 
     def init_ui(self):
-        self.setWindowTitle("PremieDrop")
+        self.setWindowTitle(APP_TEXT["window_title"])
         minimum_height = self.minimum_height_for_sections()
         self.setMinimumSize(BASE_WINDOW_WIDTH, minimum_height)
         self.resize(BASE_WINDOW_WIDTH, minimum_height)
@@ -2309,6 +2567,8 @@ class MainWindow(QMainWindow):
             }
         """)
 
+        self.apply_theme_config()
+
         window_body = QWidget()
         window_body.setObjectName("central")
         self.setCentralWidget(window_body)
@@ -2333,17 +2593,18 @@ class MainWindow(QMainWindow):
         window_body_layout.addWidget(self.youtube_host)
 
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        margin = UI_SIZES["main_margin"]
+        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setSpacing(UI_SIZES["main_spacing"])
 
         # ── Header ───────────────────────────────────────────────────
         header = QHBoxLayout()
         title_col = QVBoxLayout()
         title_col.setSpacing(2)
 
-        title = QLabel("🎬 PremieDrop")
+        title = QLabel(APP_TEXT["title"])
         title.setObjectName("title")
-        subtitle = QLabel("Your media, one drag away")
+        subtitle = QLabel(APP_TEXT["subtitle"])
         subtitle.setObjectName("subtitle")
 
         title_col.addWidget(title)
@@ -2379,7 +2640,9 @@ class MainWindow(QMainWindow):
 
         self.search_input = QLineEdit()
         self.search_input.setObjectName("library_search")
-        self.search_input.setPlaceholderText("Search files, folders, or sections...")
+        self.search_input.setPlaceholderText(
+            APP_TEXT["search_placeholder"]
+        )
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self.populate_list)
         layout.addWidget(self.search_input)
@@ -2425,7 +2688,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.image_preview, 0, Qt.AlignHCenter)
 
         # ── Drag out tip ────────────────────────────────────────────
-        drag_tip = QLabel("✦  Select files above and drag them into Premiere Pro")
+        drag_tip = QLabel(APP_TEXT["drag_tip"])
         drag_tip.setObjectName("drag_tip")
         drag_tip.setAlignment(Qt.AlignCenter)
         layout.addWidget(drag_tip)
@@ -2433,17 +2696,17 @@ class MainWindow(QMainWindow):
         library_tools_row = QHBoxLayout()
         library_tools_row.setSpacing(6)
 
-        section_btn = QPushButton("+ Section")
+        section_btn = QPushButton(APP_TEXT["add_section"])
         section_btn.setObjectName("section_btn")
         section_btn.clicked.connect(self.add_section)
-        section_btn.setFixedHeight(34)
+        section_btn.setFixedHeight(UI_SIZES["tool_button_height"])
 
-        download_btn = QPushButton("URL")
+        download_btn = QPushButton(APP_TEXT["download_url"])
         download_btn.setObjectName("download_btn")
         download_btn.setToolTip("Download media from a URL")
         download_btn.clicked.connect(self.open_download_dialog)
-        download_btn.setFixedHeight(34)
-        download_btn.setFixedWidth(54)
+        download_btn.setFixedHeight(UI_SIZES["tool_button_height"])
+        download_btn.setFixedWidth(UI_SIZES["url_button_width"])
 
         load_preset_btn = QPushButton("Load Preset")
         load_preset_btn.setObjectName("set_folder_btn")
@@ -2457,6 +2720,9 @@ class MainWindow(QMainWindow):
 
         library_tools_row.addWidget(section_btn)
         library_tools_row.addWidget(download_btn)
+        self.add_ui_extensions(
+            "library_tools", layout=library_tools_row
+        )
         library_tools_row.addStretch()
         library_tools_row.addWidget(load_preset_btn)
         library_tools_row.addWidget(save_preset_btn)
@@ -2508,16 +2774,16 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
 
-        add_btn = QPushButton("＋  Add Files")
+        add_btn = QPushButton(APP_TEXT["add_files"])
         add_btn.setObjectName("add_btn")
         add_btn.clicked.connect(self.browse_files)
-        add_btn.setFixedHeight(42)
+        add_btn.setFixedHeight(UI_SIZES["primary_button_height"])
 
-        web_btn = QPushButton("Web")
+        web_btn = QPushButton(APP_TEXT["web"])
         web_btn.setObjectName("web_btn")
         web_btn.setToolTip("Open the persistent media browser")
-        web_btn.setFixedHeight(42)
-        web_btn.setFixedWidth(78)
+        web_btn.setFixedHeight(UI_SIZES["primary_button_height"])
+        web_btn.setFixedWidth(UI_SIZES["web_button_width"])
         web_menu = QMenu(web_btn)
         web_menu.setObjectName("web_menu")
         youtube_action = web_menu.addAction("YouTube")
@@ -2528,48 +2794,58 @@ class MainWindow(QMainWindow):
         website_action.triggered.connect(self.open_website_search)
         images_action = web_menu.addAction("Search Images")
         images_action.triggered.connect(self.open_image_search)
+        self.add_ui_extensions("web_menu", menu=web_menu)
         web_btn.setMenu(web_menu)
 
-        self.import_target = "premiere_cep"
-        self.import_targets = {
-            "premiere_cep": (
-                "Premiere Pro (CEP)", "Import to Premiere (CEP)"
-            ),
-            "premiere_uxp": (
-                "Premiere Pro (UXP)", "Import to Premiere (UXP)"
-            ),
-            "davinci": ("DaVinci Resolve", "Import to DaVinci"),
-            "final_cut": ("Final Cut Pro", "Import to Final Cut"),
-        }
+        editor_settings = load_editor_settings()
+        self.last_premiere_target = editor_settings.get(
+            "last_premiere_target", "premiere_cep"
+        )
+        if self.last_premiere_target not in (
+            "premiere_cep", "premiere_uxp"
+        ):
+            self.last_premiere_target = "premiere_cep"
+        self.import_target = editor_settings.get(
+            "selected_target", self.last_premiere_target
+        )
         self.copy_btn = QToolButton()
         self.copy_btn.setObjectName("copy_btn")
         self.copy_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.copy_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self.copy_btn.clicked.connect(self.import_to_selected_editor)
-        self.copy_btn.setFixedHeight(42)
-        self.copy_btn.setMinimumWidth(190)
+        self.copy_btn.setFixedHeight(
+            UI_SIZES["primary_button_height"]
+        )
+        self.copy_btn.setMinimumWidth(
+            UI_SIZES["import_button_min_width"]
+        )
         self.copy_btn.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
         import_menu = QMenu(self.copy_btn)
         import_menu.setObjectName("web_menu")
-        for target, (menu_label, _button_label) in self.import_targets.items():
-            action = import_menu.addAction(menu_label)
-            action.triggered.connect(
-                lambda _checked=False, selected=target:
-                self.select_import_target(selected)
-            )
+        self.import_actions = {}
+        self.build_import_provider_menu(import_menu)
+
         self.copy_btn.setMenu(import_menu)
+        if (
+            self.import_target not in self.import_actions
+            or not self.import_registry.get(self.import_target).available
+        ):
+            self.import_target = self.last_premiere_target
         self.select_import_target(self.import_target)
 
-        clear_btn = QPushButton("Clear All")
+        clear_btn = QPushButton(APP_TEXT["clear_all"])
         clear_btn.setObjectName("clear_btn")
         clear_btn.clicked.connect(self.clear_all)
-        clear_btn.setFixedHeight(42)
-        clear_btn.setFixedWidth(100)
+        clear_btn.setFixedHeight(UI_SIZES["primary_button_height"])
+        clear_btn.setFixedWidth(UI_SIZES["clear_button_width"])
 
         btn_row.addWidget(add_btn)
         btn_row.addWidget(web_btn)
+        self.add_ui_extensions(
+            "primary_actions", layout=btn_row
+        )
         btn_row.addWidget(self.copy_btn, 1)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
@@ -2591,39 +2867,334 @@ class MainWindow(QMainWindow):
     def open_website_search(self):
         self.open_media_browser("search")
 
+    def apply_theme_config(self):
+        stylesheet = self.styleSheet()
+        replacements = {
+            "#1a1a2e": THEME["background"],
+            "#16213e": THEME["panel"],
+            "#6C63FF": THEME["accent"],
+            "#7b72ff": THEME["accent_hover"],
+            "#eeeeff": THEME["text"],
+            "#8888aa": THEME["muted_text"],
+            "#1a6b3a": THEME["success"],
+        }
+        for original, configured in replacements.items():
+            stylesheet = stylesheet.replace(original, configured)
+        self.setStyleSheet(stylesheet)
+
+    def add_ui_extensions(self, location, layout=None, menu=None):
+        for extension in self.ui_extension_registry.at(location):
+            callback = extension.callback
+            if menu is not None:
+                target_menu = menu
+                for menu_label in extension.menu_path:
+                    child_menu = next(
+                        (
+                            action.menu()
+                            for action in target_menu.actions()
+                            if action.menu() is not None
+                            and action.text() == menu_label
+                        ),
+                        None,
+                    )
+                    target_menu = (
+                        child_menu
+                        if child_menu is not None
+                        else target_menu.addMenu(menu_label)
+                    )
+                action = target_menu.addAction(extension.label)
+                action.setToolTip(extension.tooltip)
+                action.triggered.connect(
+                    lambda _checked=False, fn=callback: fn(self)
+                )
+                continue
+            if layout is None:
+                continue
+            button = QPushButton(extension.label)
+            if extension.object_name:
+                button.setObjectName(extension.object_name)
+            if extension.tooltip:
+                button.setToolTip(extension.tooltip)
+            if extension.width:
+                button.setFixedWidth(extension.width)
+            button.setFixedHeight(
+                extension.height
+                or (
+                    UI_SIZES["tool_button_height"]
+                    if location == "library_tools"
+                    else UI_SIZES["primary_button_height"]
+                )
+            )
+            button.clicked.connect(
+                lambda _checked=False, fn=callback: fn(self)
+            )
+            layout.addWidget(button)
+
+    def build_import_provider_menu(self, import_menu):
+        group_menus = {}
+        for provider in self.import_registry.providers():
+            target_menu = import_menu
+            if provider.group:
+                target_menu = group_menus.get(provider.group)
+                if target_menu is None:
+                    target_menu = import_menu.addMenu(provider.group)
+                    group_menus[provider.group] = target_menu
+            action = target_menu.addAction(provider.menu_label)
+            action.setCheckable(provider.available)
+            action.setEnabled(provider.available)
+            action.setToolTip(
+                provider.tooltip or provider.unavailable_reason
+            )
+            if provider.available:
+                action.triggered.connect(
+                    lambda _checked=False, provider_id=provider.id:
+                    self.select_import_target(provider_id)
+                )
+            self.import_actions[provider.id] = action
+
     def select_import_target(self, target):
-        if target not in self.import_targets:
+        provider = self.import_registry.get(target)
+        if provider is None or not provider.available:
             return
         self.import_target = target
-        self.copy_btn.setText(self.import_targets[target][1])
+        if target in ("premiere_cep", "premiere_uxp"):
+            self.last_premiere_target = target
+        for action_target, action in self.import_actions.items():
+            action.setChecked(action_target == target)
+        self.copy_btn.setText(provider.button_label)
         self.update_import_button_tooltip()
+        save_editor_settings({
+            "selected_target": self.import_target,
+            "last_premiere_target": self.last_premiere_target,
+        })
 
     def update_import_button_tooltip(self):
         if not hasattr(self, "copy_btn"):
             return
-        editor_name = self.import_targets[self.import_target][0]
+        provider = self.import_registry.get(self.import_target)
+        if provider is None:
+            self.copy_btn.setToolTip("")
+            return
+        if provider.tooltip:
+            self.copy_btn.setToolTip(provider.tooltip)
+            return
         if self.project_folder and os.path.exists(self.project_folder):
             folder_name = os.path.basename(self.project_folder)
             self.copy_btn.setToolTip(
                 f"Import all PremieDrop files from {folder_name} "
-                f"to {editor_name}"
+                f"with {provider.menu_label}"
             )
         else:
             self.copy_btn.setToolTip(
-                f"{editor_name} selected; set a project folder before importing"
+                f"{provider.menu_label} selected; set a project folder "
+                "before importing"
             )
 
     def import_to_selected_editor(self):
-        if self.import_target == "premiere_cep":
-            self.copy_new_to_project()
+        provider = self.import_registry.get(self.import_target)
+        if provider is None:
+            QMessageBox.warning(
+                self,
+                "Import Provider Missing",
+                f"The provider '{self.import_target}' is not installed."
+            )
             return
-        editor_name = self.import_targets[self.import_target][0]
+        context = ImportContext(
+            app=self,
+            sections=self.sections,
+            project_folder=self.project_folder,
+            app_data_dir=APP_DATA_DIR,
+        )
+        try:
+            provider.execute(context)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                f"{provider.menu_label} Import Failed",
+                str(exc),
+            )
+
+    def find_or_create_davinci_bin(self, media_pool, root_folder, name):
+        for folder in root_folder.GetSubFolderList() or []:
+            if folder.GetName() == name:
+                return folder
+        return media_pool.AddSubFolder(root_folder, name)
+
+    def import_to_davinci_resolve(self):
+        queued_sections = []
+        for section in self.sections:
+            paths = [
+                os.path.abspath(path)
+                for path in section["files"]
+                if os.path.isfile(path)
+            ]
+            if paths:
+                queued_sections.append({
+                    "name": section["name"],
+                    "files": paths,
+                })
+        if not queued_sections:
+            QMessageBox.information(
+                self,
+                "Nothing to Import",
+                "No valid PremieDrop files are available to import."
+            )
+            return
+
+        default_folder = (
+            self.project_folder
+            if self.project_folder and os.path.isdir(self.project_folder)
+            else os.path.join(
+                os.path.expanduser("~"), "Documents", "PremieDrop Exports"
+            )
+        )
+        os.makedirs(default_folder, exist_ok=True)
+        default_path = os.path.join(
+            default_folder,
+            f"PremieDrop Import {datetime.now():%Y-%m-%d %H-%M-%S}.fcpxml",
+        )
+        export_path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save DaVinci Resolve Timeline",
+            default_path,
+            "Final Cut Pro XML (*.fcpxml)",
+        )
+        if not export_path:
+            return
+        if not export_path.lower().endswith(".fcpxml"):
+            export_path += ".fcpxml"
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            file_count, _total_frames = write_davinci_fcpxml(
+                export_path, queued_sections
+            )
+        except (OSError, ValueError, ET.ParseError) as exc:
+            QMessageBox.warning(
+                self,
+                "Could Not Create Resolve Timeline",
+                f"The FCPXML file could not be created:\n\n{exc}",
+            )
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
         QMessageBox.information(
             self,
-            f"{editor_name} Selected",
-            f"{editor_name} is now selected.\n\n"
-            "Its import bridge has not been implemented yet."
+            "DaVinci Timeline Created",
+            f"Created an FCPXML timeline containing {file_count} file"
+            f"{'s' if file_count != 1 else ''}.\n\n"
+            "In DaVinci Resolve choose:\n"
+            "File → Import → Timeline\n\n"
+            f"Then select:\n{export_path}\n\n"
+            "PremieDrop sections are included as timeline markers."
         )
+        if os.name == "nt":
+            try:
+                subprocess.Popen(
+                    ["explorer.exe", f"/select,{export_path}"],
+                    creationflags=getattr(
+                        subprocess, "CREATE_NO_WINDOW", 0
+                    ),
+                )
+            except OSError:
+                pass
+
+    def import_to_davinci_studio(self):
+        section_files = []
+        missing = 0
+        for section in self.sections:
+            valid_paths = []
+            for path in section["files"]:
+                if os.path.isfile(path):
+                    valid_paths.append(os.path.abspath(path))
+                else:
+                    missing += 1
+            if valid_paths:
+                section_files.append((section["name"], valid_paths))
+
+        if not section_files:
+            QMessageBox.information(
+                self,
+                "Nothing to Import",
+                "No valid PremieDrop files are available to import."
+            )
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            resolve = connect_to_davinci_resolve()
+            if resolve is None:
+                raise RuntimeError(
+                    "PremieDrop could not connect to DaVinci Resolve. "
+                    "Open Resolve, load a project, and enable external "
+                    "scripting for local applications in Resolve's "
+                    "preferences."
+                )
+            project_manager = resolve.GetProjectManager()
+            project = (
+                project_manager.GetCurrentProject()
+                if project_manager is not None else None
+            )
+            if project is None:
+                raise RuntimeError(
+                    "No DaVinci Resolve project is currently open."
+                )
+            media_pool = project.GetMediaPool()
+            if media_pool is None:
+                raise RuntimeError(
+                    "The current Resolve project's Media Pool is unavailable."
+                )
+
+            root_folder = media_pool.GetRootFolder()
+            original_folder = media_pool.GetCurrentFolder()
+            imported_count = 0
+            failed_sections = []
+            try:
+                for section_name, paths in section_files:
+                    target_folder = self.find_or_create_davinci_bin(
+                        media_pool, root_folder, section_name
+                    )
+                    if target_folder is None:
+                        failed_sections.append(section_name)
+                        continue
+                    if not media_pool.SetCurrentFolder(target_folder):
+                        failed_sections.append(section_name)
+                        continue
+                    imported = media_pool.ImportMedia(paths) or []
+                    imported_count += len(imported)
+            finally:
+                if original_folder is not None:
+                    media_pool.SetCurrentFolder(original_folder)
+
+            details = [
+                f"{imported_count} media item"
+                f"{'s' if imported_count != 1 else ''} imported",
+                f"{len(section_files)} PremieDrop bin"
+                f"{'s' if len(section_files) != 1 else ''} processed",
+            ]
+            if missing:
+                details.append(f"{missing} missing file{'s' if missing != 1 else ''}")
+            if failed_sections:
+                details.append(
+                    f"{len(failed_sections)} bin"
+                    f"{'s' if len(failed_sections) != 1 else ''} failed"
+                )
+            QMessageBox.information(
+                self,
+                "DaVinci Import Complete",
+                f"{', '.join(details)}.\n\n"
+                f"Project: {project.GetName()}"
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "DaVinci Import Failed",
+                f"{exc}\n\n"
+                "Make sure DaVinci Resolve is running with a project open."
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def open_media_browser(self, tab_name):
         if (
@@ -3158,6 +3729,32 @@ class MainWindow(QMainWindow):
         self.update_window_minimum_size(expand=True)
         self.save_library()
         self.populate_list()
+
+    def write_extension_diagnostics(self):
+        errors = (
+            self.import_registry.load_errors
+            + self.ui_extension_registry.load_errors
+        )
+        diagnostics_path = os.path.join(
+            APP_DATA_DIR, "extension_errors.log"
+        )
+        if not errors:
+            try:
+                os.remove(diagnostics_path)
+            except OSError:
+                pass
+            return
+        try:
+            os.makedirs(APP_DATA_DIR, exist_ok=True)
+            with open(
+                diagnostics_path, "w", encoding="utf-8"
+            ) as diagnostics_file:
+                for path, details in errors:
+                    diagnostics_file.write(f"Extension: {path}\n")
+                    diagnostics_file.write(details)
+                    diagnostics_file.write("\n\n")
+        except OSError:
+            pass
         message = f'"{name}" loaded with {len(self.all_files())} files.'
         if missing:
             message += (

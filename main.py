@@ -2000,12 +2000,12 @@ class DownloadWorker(QThread):
         if self.settings["mode"] == "audio":
             return "bestaudio/best"
         if quality == "Best":
-            return "bv*+ba/b"
+            return "bv*[vcodec!*=av01][vcodec!*=vp9]+ba/b"
         height = "".join(character for character in quality if character.isdigit())
         return (
-            f"bv*[height<={height}]+ba/"
-            f"b[height<={height}]/best[height<={height}]"
-        )
+        f"bv*[height<={height}][vcodec!*=av01][vcodec!*=vp9]+ba/"
+        f"b[height<={height}]/best[height<={height}]"
+    )
 
     def find_output_path(self, info, prepared_path):
         expected_extension = "mp3" if self.settings["mode"] == "audio" else "mp4"
@@ -2065,10 +2065,15 @@ class DownloadWorker(QThread):
             }]
         else:
             options["merge_output_format"] = "mp4"
-            options["postprocessors"] = [{
+            options["postprocessors"] = [
+                {
                 "key": "FFmpegVideoConvertor",
                 "preferedformat": "mp4",
-            }]
+            },
+            ]
+            options["postprocessor_args"] = {
+                "merger": ["-c:a", "aac", "-b:a", "192k", "-c:v", "copy"]
+            }
 
         try:
             with yt_dlp.YoutubeDL(options) as downloader:

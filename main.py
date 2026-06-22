@@ -62,6 +62,7 @@ YOUTUBE_BROWSER_LOG_FILE = os.path.join(
 YOUTUBE_BROWSER_COMMAND_FILE = os.path.join(
     APP_DATA_DIR, "youtube_browser_command.json"
 )
+PRESETS_FILE = os.path.join(APP_DATA_DIR, "library_presets.json")
 VIDEO_THUMB_DIR = os.path.join(os.path.dirname(__file__), "thumbnail_cache")
 THUMB_SIZE = 112
 LARGE_VIDEO_BYTES = 1 * 1024 * 1024 * 1024
@@ -319,6 +320,19 @@ def save_files(file_list, project_folder="", sections=None):
         existing["project_folder"] = project_folder
     with open(SAVE_FILE, "w") as f:
         json.dump(existing, f, indent=2)
+
+def load_presets():
+    try:
+        with open(PRESETS_FILE, "r", encoding="utf-8") as preset_file:
+            presets = json.load(preset_file)
+        return presets if isinstance(presets, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+def save_presets(presets):
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+    with open(PRESETS_FILE, "w", encoding="utf-8") as preset_file:
+        json.dump(presets, preset_file, indent=2)
 
 def write_import_queue(project_folder, entries):
     os.makedirs(APP_DATA_DIR, exist_ok=True)
@@ -2364,6 +2378,30 @@ class MainWindow(QMainWindow):
         drag_tip.setAlignment(Qt.AlignCenter)
         layout.addWidget(drag_tip)
 
+        library_tools_row = QHBoxLayout()
+        library_tools_row.setSpacing(6)
+
+        section_btn = QPushButton("+ Section")
+        section_btn.setObjectName("section_btn")
+        section_btn.clicked.connect(self.add_section)
+        section_btn.setFixedHeight(34)
+
+        load_preset_btn = QPushButton("Load Preset")
+        load_preset_btn.setObjectName("set_folder_btn")
+        load_preset_btn.clicked.connect(self.load_library_preset)
+        load_preset_btn.setFixedHeight(34)
+
+        save_preset_btn = QPushButton("Save Preset")
+        save_preset_btn.setObjectName("set_folder_btn")
+        save_preset_btn.clicked.connect(self.save_library_preset)
+        save_preset_btn.setFixedHeight(34)
+
+        library_tools_row.addWidget(section_btn)
+        library_tools_row.addStretch()
+        library_tools_row.addWidget(load_preset_btn)
+        library_tools_row.addWidget(save_preset_btn)
+        layout.addLayout(library_tools_row)
+
         # ── Project folder section ───────────────────────────────────
         folder_line = QFrame()
         folder_line.setFrameShape(QFrame.HLine)
@@ -2376,20 +2414,12 @@ class MainWindow(QMainWindow):
         self.folder_label = QLabel("No project folder set")
         self.folder_label.setObjectName("folder_label")
         self.folder_label.setProperty("active", False)
-        self.folder_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.folder_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         set_folder_btn = QPushButton("📁  Set Folder")
         set_folder_btn.setObjectName("set_folder_btn")
         set_folder_btn.setFixedHeight(32)
         set_folder_btn.clicked.connect(self.set_project_folder)
-
-        folder_row.addWidget(self.folder_label)
-        folder_row.addWidget(set_folder_btn)
-        layout.addLayout(folder_row)
-
-        folder_tools_row = QHBoxLayout()
-        folder_tools_row.setSpacing(6)
-        folder_tools_row.addStretch()
 
         self.auto_organize_btn = QPushButton("Auto Organize")
         self.auto_organize_btn.setObjectName("set_folder_btn")
@@ -2397,7 +2427,7 @@ class MainWindow(QMainWindow):
             "Move loose media in the project folder into preset section folders"
         )
         self.auto_organize_btn.clicked.connect(self.auto_organize_assets)
-        self.auto_organize_btn.setFixedHeight(30)
+        self.auto_organize_btn.setFixedHeight(32)
 
         self.reload_assets_btn = QPushButton("Reload Assets")
         self.reload_assets_btn.setObjectName("set_folder_btn")
@@ -2405,11 +2435,14 @@ class MainWindow(QMainWindow):
             "Rescan preset section folders into the PremieDrop library"
         )
         self.reload_assets_btn.clicked.connect(self.reload_assets)
-        self.reload_assets_btn.setFixedHeight(30)
+        self.reload_assets_btn.setFixedHeight(32)
 
-        folder_tools_row.addWidget(self.auto_organize_btn)
-        folder_tools_row.addWidget(self.reload_assets_btn)
-        layout.addLayout(folder_tools_row)
+        folder_row.addWidget(self.folder_label)
+        folder_row.addWidget(set_folder_btn)
+        folder_row.addStretch()
+        folder_row.addWidget(self.auto_organize_btn)
+        folder_row.addWidget(self.reload_assets_btn)
+        layout.addLayout(folder_row)
 
         # ── Buttons ──────────────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -2419,11 +2452,6 @@ class MainWindow(QMainWindow):
         add_btn.setObjectName("add_btn")
         add_btn.clicked.connect(self.browse_files)
         add_btn.setFixedHeight(42)
-
-        section_btn = QPushButton("+ Section")
-        section_btn.setObjectName("section_btn")
-        section_btn.clicked.connect(self.add_section)
-        section_btn.setFixedHeight(42)
 
         download_btn = QPushButton("URL")
         download_btn.setObjectName("download_btn")
@@ -2460,17 +2488,11 @@ class MainWindow(QMainWindow):
         clear_btn.setFixedWidth(100)
 
         btn_row.addWidget(add_btn)
-        btn_row.addWidget(section_btn)
+        btn_row.addWidget(web_btn)
         btn_row.addWidget(download_btn)
         btn_row.addWidget(self.copy_btn)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
-
-        browser_row = QHBoxLayout()
-        browser_row.setSpacing(6)
-        browser_row.addStretch()
-        browser_row.addWidget(web_btn)
-        layout.addLayout(browser_row)
 
         # Set initial folder label state
         self.update_folder_label()
@@ -2901,6 +2923,130 @@ class MainWindow(QMainWindow):
         if added:
             self.save_library()
             self.populate_list()
+
+    def next_preset_name(self, presets):
+        number = 1
+        existing = {name.casefold() for name in presets}
+        while f"preset {number}" in existing:
+            number += 1
+        return f"Preset {number}"
+
+    def save_library_preset(self):
+        presets = load_presets()
+        default_name = self.next_preset_name(presets)
+        name, accepted = QInputDialog.getText(
+            self,
+            "Save Preset",
+            "Preset name:",
+            text=default_name,
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+
+        existing_name = next(
+            (
+                preset_name for preset_name in presets
+                if preset_name.casefold() == name.casefold()
+            ),
+            None,
+        )
+        if existing_name is not None:
+            replace = QMessageBox.question(
+                self,
+                "Replace Preset",
+                f'A preset named "{existing_name}" already exists. Replace it?',
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if replace != QMessageBox.Yes:
+                return
+            if existing_name != name:
+                presets.pop(existing_name, None)
+
+        presets[name] = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "sections": [
+                {
+                    "name": section["name"],
+                    "files": list(section["files"]),
+                }
+                for section in self.sections
+            ],
+        }
+        try:
+            save_presets(presets)
+        except OSError as exc:
+            QMessageBox.warning(self, "Preset Not Saved", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Preset Saved",
+            f'"{name}" saved with {len(self.all_files())} files.',
+        )
+
+    def load_library_preset(self):
+        presets = load_presets()
+        if not presets:
+            QMessageBox.information(
+                self,
+                "No Presets",
+                "No saved presets are available yet.",
+            )
+            return
+
+        names = list(presets)
+        name, accepted = QInputDialog.getItem(
+            self,
+            "Load Preset",
+            "Choose a preset:",
+            names,
+            0,
+            False,
+        )
+        if not accepted or not name:
+            return
+
+        preset_sections = presets.get(name, {}).get("sections", [])
+        if not isinstance(preset_sections, list):
+            QMessageBox.warning(
+                self, "Preset Invalid", "This preset could not be loaded."
+            )
+            return
+
+        missing = 0
+        restored_sections = []
+        for section in preset_sections:
+            if not isinstance(section, dict):
+                continue
+            files = []
+            for path in section.get("files", []):
+                normalized = os.path.normpath(path)
+                if os.path.exists(normalized):
+                    files.append(normalized)
+                else:
+                    missing += 1
+            restored_sections.append({
+                "name": str(section.get("name", "")).strip(),
+                "files": files,
+            })
+
+        self.image_preview.hide_for_switch()
+        if self.video_preview is not None:
+            self.video_preview.close_preview()
+        for window in list(self.video_windows):
+            window.close_preview()
+
+        self.sections = normalize_sections(restored_sections)
+        self.update_window_minimum_size(expand=True)
+        self.save_library()
+        self.populate_list()
+        message = f'"{name}" loaded with {len(self.all_files())} files.'
+        if missing:
+            message += (
+                f"\n\n{missing} missing file"
+                f"{'s were' if missing != 1 else ' was'} skipped."
+            )
+        QMessageBox.information(self, "Preset Loaded", message)
 
     def add_section(self):
         name, ok = QInputDialog.getText(self, "Add Section", "Section name:")

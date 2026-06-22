@@ -2050,6 +2050,8 @@ class DownloadWorker(QThread):
             "restrictfilenames": True,  # <-- add this line
             "keepvideo": False,
             "nopart": True,
+            "noresumethreshold": 0,
+            "continuedl": False,
         }
 
         ffmpeg_path = get_ffmpeg_path()

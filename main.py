@@ -2047,6 +2047,9 @@ class DownloadWorker(QThread):
             "quiet": True,
             "no_warnings": True,
             "windowsfilenames": platform.system() == "Windows",
+            "restrictfilenames": True,  # <-- add this line
+            "keepvideo": False,
+            "nopart": True,
         }
 
         ffmpeg_path = get_ffmpeg_path()

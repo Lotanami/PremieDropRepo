@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QInputDialog,
+    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -69,6 +70,9 @@ class YouTubeBrowserWindow(QWidget):
         self.status_path = status_path
         self.log_path = log_path
         self.command_path = command_path
+        self.browser_presets_path = os.path.join(
+            os.path.dirname(command_path), "browser_presets.json"
+        )
         self.web_view_class = web_view_class
         self.sites = {
             "youtube": {
@@ -79,10 +83,19 @@ class YouTubeBrowserWindow(QWidget):
                 "name": "MyInstants",
                 "url": myinstants_url,
             },
+            "search": {
+                "name": "Web Search",
+                "url": "https://www.google.com/",
+            },
         }
         self.image_searches = {}
         self.next_image_search_id = 1
         self.active_image_search_id = None
+        self.website_searches = {}
+        self.next_website_search_id = 1
+        self.active_website_search_id = None
+        self.browser_presets = []
+        self.load_browser_state()
         self.requested_initial_tab = initial_tab
         self.current_tab = (
             initial_tab if initial_tab in self.sites else "youtube"
@@ -157,6 +170,29 @@ class YouTubeBrowserWindow(QWidget):
                 color: #ffffff;
                 border: 2px solid #ffffff;
             }
+            QMenu {
+                background-color: #16213e;
+                color: #eeeeff;
+                border: 1px solid #62629a;
+                padding: 5px;
+            }
+            QMenu::item {
+                min-width: 190px;
+                padding: 8px 22px 8px 12px;
+                border: 1px solid transparent;
+                border-radius: 5px;
+            }
+            QMenu::item:selected {
+                background-color: #7b72ff;
+                color: #ffffff;
+                border: 1px solid #ffffff;
+                font-weight: bold;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #51517f;
+                margin: 5px 8px;
+            }
         """)
 
         layout = QVBoxLayout(self)
@@ -204,6 +240,10 @@ class YouTubeBrowserWindow(QWidget):
         self.images_tab_btn.setFixedWidth(72)
         self.images_menu = QMenu(self.images_tab_btn)
         self.images_menu.setToolTipsVisible(True)
+        self.images_menu.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.images_menu.customContextMenuRequested.connect(
+            self.show_saved_site_context_menu
+        )
         self.images_menu.aboutToShow.connect(self.rebuild_images_menu)
         self.images_tab_btn.setMenu(self.images_menu)
         controls.addWidget(self.images_tab_btn)
@@ -244,6 +284,9 @@ class YouTubeBrowserWindow(QWidget):
             web_view.setUrl(QUrl(site["url"]))
             self.web_views[tab_name] = web_view
             self.tabs.addWidget(web_view)
+        self.web_views["search"].urlChanged.connect(
+            self.update_active_website_url
+        )
         layout.addWidget(self.tabs, 1)
 
         self.web_views["youtube"].page().profile().downloadRequested.connect(
@@ -263,6 +306,8 @@ class YouTubeBrowserWindow(QWidget):
         self.switch_tab(self.current_tab)
         if self.requested_initial_tab == "images":
             QTimer.singleShot(0, self.search_images)
+        elif self.requested_initial_tab == "search":
+            QTimer.singleShot(0, self.search_website)
 
     def current_web_view(self):
         if self.current_tab == "images":
@@ -313,6 +358,48 @@ class YouTubeBrowserWindow(QWidget):
             "url": search_url,
         }
         self.open_saved_image_search(search_id)
+
+    def search_website(self):
+        query, accepted = QInputDialog.getText(
+            self,
+            "Search Website",
+            "Enter a website address or search:",
+        )
+        query = query.strip()
+        if not accepted or not query:
+            return
+        if "://" in query:
+            target_url = query
+        elif "." in query and " " not in query:
+            target_url = f"https://{query}"
+        else:
+            target_url = (
+                "https://www.google.com/search?q="
+                f"{quote_plus(query)}"
+            )
+        website_id = self.next_website_search_id
+        self.next_website_search_id += 1
+        self.website_searches[website_id] = {
+            "label": query,
+            "url": target_url,
+        }
+        self.save_browser_state()
+        self.open_saved_website(website_id)
+
+    def open_saved_website(self, website_id):
+        if website_id not in self.website_searches:
+            return
+        self.active_website_search_id = website_id
+        self.switch_tab("search")
+        self.web_views["search"].setUrl(
+            QUrl(self.website_searches[website_id]["url"])
+        )
+
+    def update_active_website_url(self, url):
+        website_id = self.active_website_search_id
+        if website_id in self.website_searches:
+            self.website_searches[website_id]["url"] = url.toString()
+            self.save_browser_state()
 
     def image_view_key(self, search_id):
         return f"image:{search_id}"
@@ -379,6 +466,39 @@ class YouTubeBrowserWindow(QWidget):
 
     def rebuild_images_menu(self):
         self.images_menu.clear()
+        website_action = self.images_menu.addAction("Search Website")
+        website_action.triggered.connect(self.search_website)
+        image_action = self.images_menu.addAction("Search Images")
+        image_action.triggered.connect(self.search_images)
+        self.images_menu.addSeparator()
+        save_preset_action = self.images_menu.addAction("Save Preset")
+        save_preset_action.triggered.connect(
+            self.save_current_website_preset
+        )
+        self.load_preset_menu = self.images_menu.addMenu("Load Preset")
+        self.load_preset_menu.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.load_preset_menu.customContextMenuRequested.connect(
+            self.show_preset_context_menu
+        )
+        self.rebuild_preset_menu()
+        self.images_menu.addSeparator()
+        for website_id, website in self.website_searches.items():
+            domain = urlparse(website["url"]).netloc or "website"
+            label = website["label"]
+            if len(label) > 28:
+                label = f"{label[:25]}..."
+            action = self.images_menu.addAction(
+                f"{label} — {domain}"
+            )
+            action.setToolTip(website["url"])
+            action.setProperty("saved_kind", "website")
+            action.setProperty("saved_id", website_id)
+            action.triggered.connect(
+                lambda _checked=False, sid=website_id:
+                self.open_saved_website(sid)
+            )
+        if self.website_searches and self.image_searches:
+            self.images_menu.addSeparator()
         for search_id, search in self.image_searches.items():
             domain = urlparse(search["url"]).netloc or "images"
             label = search["label"]
@@ -388,20 +508,189 @@ class YouTubeBrowserWindow(QWidget):
                 f"{label} — {domain}"
             )
             action.setToolTip(search["url"])
+            action.setProperty("saved_kind", "image")
+            action.setProperty("saved_id", search_id)
             action.triggered.connect(
                 lambda _checked=False, sid=search_id:
                 self.open_saved_image_search(sid)
             )
-        if self.image_searches:
+        if self.website_searches or self.image_searches:
             self.images_menu.addSeparator()
-        new_action = self.images_menu.addAction("+ New")
+        new_action = self.images_menu.addAction("+ New Image Search")
         new_action.triggered.connect(self.search_images)
+
+    def show_saved_site_context_menu(self, position):
+        action = self.images_menu.actionAt(position)
+        if action is None:
+            return
+        saved_kind = action.property("saved_kind")
+        saved_id = action.property("saved_id")
+        if saved_kind not in ("website", "image") or saved_id is None:
+            return
+        menu = QMenu(self.images_menu)
+        delete_action = menu.addAction("Delete")
+        chosen = menu.exec_(self.images_menu.mapToGlobal(position))
+        if chosen != delete_action:
+            return
+        if saved_kind == "website":
+            self.delete_saved_website(int(saved_id))
+        else:
+            self.delete_saved_image_search(int(saved_id))
+
+    def delete_saved_website(self, website_id):
+        if website_id not in self.website_searches:
+            return
+        del self.website_searches[website_id]
+        if self.active_website_search_id == website_id:
+            self.active_website_search_id = None
+            self.web_views["search"].setUrl(
+                QUrl(self.sites["search"]["url"])
+            )
+        self.save_browser_state()
+
+    def delete_saved_image_search(self, search_id):
+        if search_id not in self.image_searches:
+            return
+        if self.active_image_search_id == search_id:
+            self.unload_active_image_view()
+            self.switch_tab("search")
+        self.image_searches.pop(search_id, None)
+
+    def load_browser_state(self):
+        try:
+            with open(
+                self.browser_presets_path, "r", encoding="utf-8"
+            ) as state_file:
+                state = json.load(state_file)
+        except (OSError, ValueError, TypeError):
+            return
+        for website in state.get("websites", []):
+            label = str(website.get("label", "")).strip()
+            url = str(website.get("url", "")).strip()
+            if not label or not url:
+                continue
+            website_id = self.next_website_search_id
+            self.next_website_search_id += 1
+            self.website_searches[website_id] = {
+                "label": label,
+                "url": url,
+            }
+        self.browser_presets = [
+            {
+                "name": str(preset.get("name", "")).strip(),
+                "url": str(preset.get("url", "")).strip(),
+            }
+            for preset in state.get("presets", [])
+            if preset.get("name") and preset.get("url")
+        ]
+
+    def save_browser_state(self):
+        os.makedirs(os.path.dirname(self.browser_presets_path), exist_ok=True)
+        temporary_path = f"{self.browser_presets_path}.tmp"
+        state = {
+            "websites": list(self.website_searches.values()),
+            "presets": self.browser_presets,
+        }
+        try:
+            with open(
+                temporary_path, "w", encoding="utf-8"
+            ) as state_file:
+                json.dump(state, state_file, indent=2)
+            os.replace(temporary_path, self.browser_presets_path)
+        except OSError:
+            pass
+
+    def save_current_website_preset(self):
+        view = self.current_web_view()
+        if view is None:
+            return
+        url = view.url().toString()
+        if not url or url == "about:blank":
+            QMessageBox.information(
+                self, "Nothing to Save", "Open a website first."
+            )
+            return
+        default_name = f"Preset {len(self.browser_presets) + 1}"
+        name, accepted = QInputDialog.getText(
+            self,
+            "Save Website Preset",
+            "Preset name:",
+            QLineEdit.Normal,
+            default_name,
+        )
+        name = name.strip()
+        if not accepted:
+            return
+        if not name:
+            name = default_name
+        existing = next(
+            (
+                preset for preset in self.browser_presets
+                if preset["name"].casefold() == name.casefold()
+            ),
+            None,
+        )
+        if existing is None:
+            self.browser_presets.append({"name": name, "url": url})
+        else:
+            existing["name"] = name
+            existing["url"] = url
+        self.save_browser_state()
+
+    def rebuild_preset_menu(self):
+        self.load_preset_menu.clear()
+        if not self.browser_presets:
+            empty_action = self.load_preset_menu.addAction(
+                "No saved presets yet"
+            )
+            empty_action.setEnabled(False)
+            return
+        for index, preset in enumerate(self.browser_presets):
+            action = self.load_preset_menu.addAction(preset["name"])
+            action.setToolTip(preset["url"])
+            action.setProperty("preset_index", index)
+            action.triggered.connect(
+                lambda _checked=False, preset_index=index:
+                self.load_website_preset(preset_index)
+            )
+
+    def load_website_preset(self, preset_index):
+        if not 0 <= preset_index < len(self.browser_presets):
+            return
+        preset = self.browser_presets[preset_index]
+        website_id = self.next_website_search_id
+        self.next_website_search_id += 1
+        self.website_searches[website_id] = {
+            "label": preset["name"],
+            "url": preset["url"],
+        }
+        self.save_browser_state()
+        self.open_saved_website(website_id)
+
+    def show_preset_context_menu(self, position):
+        action = self.load_preset_menu.actionAt(position)
+        if action is None:
+            return
+        preset_index = action.property("preset_index")
+        if preset_index is None:
+            return
+        menu = QMenu(self.load_preset_menu)
+        delete_action = menu.addAction("Delete Preset")
+        chosen = menu.exec_(self.load_preset_menu.mapToGlobal(position))
+        if chosen != delete_action:
+            return
+        preset_index = int(preset_index)
+        if 0 <= preset_index < len(self.browser_presets):
+            self.browser_presets.pop(preset_index)
+            self.save_browser_state()
 
     def switch_tab(self, tab_name):
         if tab_name not in self.sites:
             return
         if self.current_tab == "images":
             self.unload_active_image_view()
+        if tab_name != "search":
+            self.active_website_search_id = None
         self.current_tab = tab_name
         self.download_btn.setVisible(tab_name == "youtube")
         self.tabs.setCurrentWidget(self.web_views[tab_name])
@@ -446,7 +735,9 @@ class YouTubeBrowserWindow(QWidget):
         self.activateWindow()
         self.publish_attachment_status()
         QTimer.singleShot(100, self.sync_with_premiedrop)
-        if command.get("search_images"):
+        if command.get("search_website"):
+            QTimer.singleShot(0, self.search_website)
+        elif command.get("search_images"):
             if self.image_searches:
                 latest_search_id = max(self.image_searches)
                 QTimer.singleShot(

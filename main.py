@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QListWidget, QListWidgetItem, QFileDialog,
     QAbstractItemView, QMenu, QAction, QMessageBox, QFrame, QSizePolicy,
     QInputDialog, QListView, QStyledItemDelegate, QSlider, QShortcut,
-    QDialog, QLineEdit, QComboBox, QProgressBar
+    QDialog, QLineEdit, QComboBox, QProgressBar, QToolButton
 )
 from PyQt5.QtCore import (
     Qt, QMimeData, QUrl, QSize, QRect, QTimer, QPoint, QThread, pyqtSignal
@@ -2205,8 +2205,9 @@ class MainWindow(QMainWindow):
                 border-radius: 5px;
             }
             QMenu#web_menu::item:selected {
-                background-color: #6C63FF;
+                background-color: #7b72ff;
                 color: #ffffff;
+                border: 1px solid #d7d4ff;
                 font-weight: bold;
             }
             QPushButton#add_btn {
@@ -2236,7 +2237,7 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
-            QPushButton#copy_btn {
+            QToolButton#copy_btn {
                 background-color: #1a6b3a;
                 color: white;
                 border: none;
@@ -2245,13 +2246,13 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
                 font-weight: bold;
             }
-            QPushButton#copy_btn:hover {
+            QToolButton#copy_btn:hover {
                 background-color: #1e8048;
             }
-            QPushButton#copy_btn:pressed {
+            QToolButton#copy_btn:pressed {
                 background-color: #166030;
             }
-            QPushButton#copy_btn:disabled {
+            QToolButton#copy_btn:disabled {
                 background-color: #1a2a20;
                 color: #446655;
             }
@@ -2437,6 +2438,13 @@ class MainWindow(QMainWindow):
         section_btn.clicked.connect(self.add_section)
         section_btn.setFixedHeight(34)
 
+        download_btn = QPushButton("URL")
+        download_btn.setObjectName("download_btn")
+        download_btn.setToolTip("Download media from a URL")
+        download_btn.clicked.connect(self.open_download_dialog)
+        download_btn.setFixedHeight(34)
+        download_btn.setFixedWidth(54)
+
         load_preset_btn = QPushButton("Load Preset")
         load_preset_btn.setObjectName("set_folder_btn")
         load_preset_btn.clicked.connect(self.load_library_preset)
@@ -2448,6 +2456,7 @@ class MainWindow(QMainWindow):
         save_preset_btn.setFixedHeight(34)
 
         library_tools_row.addWidget(section_btn)
+        library_tools_row.addWidget(download_btn)
         library_tools_row.addStretch()
         library_tools_row.addWidget(load_preset_btn)
         library_tools_row.addWidget(save_preset_btn)
@@ -2504,13 +2513,6 @@ class MainWindow(QMainWindow):
         add_btn.clicked.connect(self.browse_files)
         add_btn.setFixedHeight(42)
 
-        download_btn = QPushButton("URL")
-        download_btn.setObjectName("download_btn")
-        download_btn.setToolTip("Download media from a URL")
-        download_btn.clicked.connect(self.open_download_dialog)
-        download_btn.setFixedHeight(42)
-        download_btn.setFixedWidth(54)
-
         web_btn = QPushButton("Web")
         web_btn.setObjectName("web_btn")
         web_btn.setToolTip("Open the persistent media browser")
@@ -2522,15 +2524,43 @@ class MainWindow(QMainWindow):
         youtube_action.triggered.connect(self.open_youtube_browser)
         myinstants_action = web_menu.addAction("MyInstants")
         myinstants_action.triggered.connect(self.open_myinstants_browser)
-        images_action = web_menu.addAction("Image Search")
+        website_action = web_menu.addAction("Search Website")
+        website_action.triggered.connect(self.open_website_search)
+        images_action = web_menu.addAction("Search Images")
         images_action.triggered.connect(self.open_image_search)
         web_btn.setMenu(web_menu)
 
-        self.copy_btn = QPushButton("Import All to Premiere")
+        self.import_target = "premiere_cep"
+        self.import_targets = {
+            "premiere_cep": (
+                "Premiere Pro (CEP)", "Import to Premiere (CEP)"
+            ),
+            "premiere_uxp": (
+                "Premiere Pro (UXP)", "Import to Premiere (UXP)"
+            ),
+            "davinci": ("DaVinci Resolve", "Import to DaVinci"),
+            "final_cut": ("Final Cut Pro", "Import to Final Cut"),
+        }
+        self.copy_btn = QToolButton()
         self.copy_btn.setObjectName("copy_btn")
-        self.copy_btn.clicked.connect(self.copy_new_to_project)
+        self.copy_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.copy_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self.copy_btn.clicked.connect(self.import_to_selected_editor)
         self.copy_btn.setFixedHeight(42)
-        self.copy_btn.setText("Import All to Premiere")
+        self.copy_btn.setMinimumWidth(190)
+        self.copy_btn.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        import_menu = QMenu(self.copy_btn)
+        import_menu.setObjectName("web_menu")
+        for target, (menu_label, _button_label) in self.import_targets.items():
+            action = import_menu.addAction(menu_label)
+            action.triggered.connect(
+                lambda _checked=False, selected=target:
+                self.select_import_target(selected)
+            )
+        self.copy_btn.setMenu(import_menu)
+        self.select_import_target(self.import_target)
 
         clear_btn = QPushButton("Clear All")
         clear_btn.setObjectName("clear_btn")
@@ -2540,8 +2570,7 @@ class MainWindow(QMainWindow):
 
         btn_row.addWidget(add_btn)
         btn_row.addWidget(web_btn)
-        btn_row.addWidget(download_btn)
-        btn_row.addWidget(self.copy_btn)
+        btn_row.addWidget(self.copy_btn, 1)
         btn_row.addWidget(clear_btn)
         layout.addLayout(btn_row)
 
@@ -2558,6 +2587,43 @@ class MainWindow(QMainWindow):
 
     def open_image_search(self):
         self.open_media_browser("images")
+
+    def open_website_search(self):
+        self.open_media_browser("search")
+
+    def select_import_target(self, target):
+        if target not in self.import_targets:
+            return
+        self.import_target = target
+        self.copy_btn.setText(self.import_targets[target][1])
+        self.update_import_button_tooltip()
+
+    def update_import_button_tooltip(self):
+        if not hasattr(self, "copy_btn"):
+            return
+        editor_name = self.import_targets[self.import_target][0]
+        if self.project_folder and os.path.exists(self.project_folder):
+            folder_name = os.path.basename(self.project_folder)
+            self.copy_btn.setToolTip(
+                f"Import all PremieDrop files from {folder_name} "
+                f"to {editor_name}"
+            )
+        else:
+            self.copy_btn.setToolTip(
+                f"{editor_name} selected; set a project folder before importing"
+            )
+
+    def import_to_selected_editor(self):
+        if self.import_target == "premiere_cep":
+            self.copy_new_to_project()
+            return
+        editor_name = self.import_targets[self.import_target][0]
+        QMessageBox.information(
+            self,
+            f"{editor_name} Selected",
+            f"{editor_name} is now selected.\n\n"
+            "Its import bridge has not been implemented yet."
+        )
 
     def open_media_browser(self, tab_name):
         if (
@@ -2624,6 +2690,7 @@ class MainWindow(QMainWindow):
         command = {
             "tab": tab_name,
             "search_images": tab_name == "images",
+            "search_website": tab_name == "search",
             "created_at": datetime.now(timezone.utc).timestamp(),
         }
         try:
@@ -3151,15 +3218,12 @@ class MainWindow(QMainWindow):
             self.folder_label.setToolTip(self.project_folder)
             self.folder_label.setStyleSheet("color: #44aa66; font-size: 11px;")
             self.copy_btn.setEnabled(True)
-            self.copy_btn.setToolTip(
-                f"Copy all PremieDrop files into {name} and import them through the CEP panel"
-            )
         else:
             self.folder_label.setText("No project folder set")
             self.folder_label.setToolTip("")
             self.folder_label.setStyleSheet("color: #555577; font-size: 11px; font-style: italic;")
-            self.copy_btn.setEnabled(False)
-            self.copy_btn.setToolTip("")
+            self.copy_btn.setEnabled(True)
+        self.update_import_button_tooltip()
         self.auto_organize_btn.setEnabled(folder_active)
         self.reload_assets_btn.setEnabled(folder_active)
 

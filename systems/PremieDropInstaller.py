@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
 from urllib.error import URLError
@@ -210,9 +211,33 @@ class InstallerApp(tk.Tk):
     def set_status(self, text):
         self.after(0, self.status_text.set, text)
 
+    def vlc_is_installed(self):
+        program_files = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+        program_files_x86 = os.environ.get(
+            "PROGRAMFILES(X86)",
+            r"C:\Program Files (x86)",
+        )
+        candidates = [
+            Path(program_files) / "VideoLAN" / "VLC" / "vlc.exe",
+            Path(program_files_x86) / "VideoLAN" / "VLC" / "vlc.exe",
+        ]
+        return any(path.exists() for path in candidates)
+
     def install_complete(self, exe_path):
         self.progress.stop()
         self.install_button.configure(state="normal")
+
+        if not self.vlc_is_installed():
+            open_vlc = messagebox.askyesno(
+                "VLC Required",
+                "PremieDrop uses VLC for video preview, but VLC was not "
+                "found on your system.\n\n"
+                "Open the VLC download page now?\n"
+                "You can install it later; everything else will work fine.",
+            )
+            if open_vlc:
+                webbrowser.open("https://www.videolan.org/vlc/download-windows.html")
+
         if messagebox.askyesno(
             "PremieDrop installed",
             "PremieDrop installed successfully. Launch it now?",

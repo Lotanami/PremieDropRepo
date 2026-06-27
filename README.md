@@ -7,7 +7,7 @@ editors.
 
 | Path | Purpose |
 |---|---|
-| `PremieDropInstaller.py` | Source for the Windows installer executable. |
+| `PremieDropInstaller.exe` | Windows installer executable. |
 | `cep-extension/` | Premiere Pro CEP bridge package. |
 | `systems/` | PremieDrop application source, build scripts, and developer docs. |
 

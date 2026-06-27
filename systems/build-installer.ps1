@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $projectRoot
-$installerSource = Join-Path $repoRoot "PremieDropInstaller.py"
+$installerSource = Join-Path $projectRoot "PremieDropInstaller.py"
 $cepPayload = Join-Path $repoRoot "cep-extension"
 
 if ($env:PYTHON) {
@@ -42,6 +42,13 @@ try {
     Write-Host ""
     Write-Host "Built PremieDrop installer:"
     Write-Host (Join-Path $projectRoot "dist\PremieDropInstaller.exe")
+
+    Copy-Item `
+        -LiteralPath (Join-Path $projectRoot "dist\PremieDropInstaller.exe") `
+        -Destination (Join-Path $repoRoot "PremieDropInstaller.exe") `
+        -Force
+    Write-Host "Copied installer to:"
+    Write-Host (Join-Path $repoRoot "PremieDropInstaller.exe")
 }
 finally {
     Pop-Location

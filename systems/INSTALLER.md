@@ -30,6 +30,12 @@ The output is:
 dist\PremieDropInstaller.exe
 ```
 
+The build script also copies the installer to:
+
+```text
+..\PremieDropInstaller.exe
+```
+
 By default, the installer downloads:
 
 ```text

@@ -7,12 +7,12 @@ Companion panel for Premiere Pro 2022.
 1. Close Premiere Pro.
 2. Run `install.ps1` in PowerShell.
 3. Restart Premiere Pro.
-4. Open `Window > Extensions > PremieDrop Bridge`.
+4. Open `Window > Extensions > PremieDrop Bridge V0`.
 
 ## Test
 
 1. In PremieDrop, select a project media folder.
-2. Keep the PremieDrop Bridge panel open in Premiere.
+2. Keep the PremieDrop Bridge V0 panel open in Premiere.
 3. Click `Import All to Premiere` in PremieDrop.
 
 The panel reads:

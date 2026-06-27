@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ExtensionManifest
     Version="7.0"
-    ExtensionBundleId="com.premiedrop.bridge"
+    ExtensionBundleId="com.premiedrop.bridge.v0"
     ExtensionBundleVersion="0.1.0">
     <ExtensionList>
-        <Extension Id="com.premiedrop.bridge.panel"/>
+        <Extension Id="com.premiedrop.bridge.v0.panel"/>
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>
@@ -18,7 +18,7 @@
         </RequiredRuntimeList>
     </ExecutionEnvironment>
     <DispatchInfoList>
-        <Extension Id="com.premiedrop.bridge.panel">
+        <Extension Id="com.premiedrop.bridge.v0.panel">
             <DispatchInfo>
                 <Resources>
                     <MainPath>./client/index.html</MainPath>
@@ -33,7 +33,7 @@
                 </Lifecycle>
                 <UI>
                     <Type>Panel</Type>
-                    <Menu>PremieDrop Bridge</Menu>
+                    <Menu>PremieDrop Bridge V0</Menu>
                     <Geometry>
                         <Size>
                             <Width>340</Width>

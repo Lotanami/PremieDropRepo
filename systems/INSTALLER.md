@@ -33,7 +33,7 @@ dist\PremieDropInstaller.exe
 By default, the installer downloads:
 
 ```text
-https://github.com/cedjp/premiedrop/releases/latest/download/premiedrop.exe
+https://github.com/Lotanami/PremieDropRepo/releases/latest/download/premiedrop.exe
 ```
 
 Set `PREMIEDROP_DOWNLOAD_URL` before launching the installer to test another

@@ -14,12 +14,12 @@ APP_NAME = "PremieDrop"
 EXE_NAME = "premiedrop.exe"
 DOWNLOAD_URL = os.environ.get(
     "PREMIEDROP_DOWNLOAD_URL",
-    "https://github.com/cedjp/premiedrop/releases/latest/download/premiedrop.exe",
+    "https://github.com/Lotanami/PremieDropRepo/releases/latest/download/premiedrop.exe",
 )
 
 
 def resource_path(relative_path):
-    base_path = getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])
+    base_path = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
     return Path(base_path) / relative_path
 
 

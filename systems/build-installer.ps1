@@ -1,8 +1,9 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$installerSource = Join-Path $projectRoot "installer\premiedrop_installer.py"
-$cepPayload = Join-Path $projectRoot "cep-extension"
+$repoRoot = Split-Path -Parent $projectRoot
+$installerSource = Join-Path $repoRoot "PremieDropInstaller.py"
+$cepPayload = Join-Path $repoRoot "cep-extension"
 
 if ($env:PYTHON) {
     $pythonCommand = @($env:PYTHON)

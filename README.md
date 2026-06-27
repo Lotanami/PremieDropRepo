@@ -137,6 +137,35 @@ Run PremieDrop:
 python main.py
 ```
 
+Build the Windows executable:
+
+```powershell
+.\build-windows.ps1
+```
+
+The generated application is written to:
+
+```text
+dist\premiedrop\premiedrop.exe
+```
+
+Build the Windows installer:
+
+```powershell
+.\build-installer.ps1
+```
+
+The generated installer is written to:
+
+```text
+dist\PremieDropInstaller.exe
+```
+
+The installer downloads the current `premiedrop.exe`, installs it into
+`%LOCALAPPDATA%\PremieDrop`, and offers editor package options. The Premiere
+Pro CEP extension can be selected during install; the Premiere Pro UXP option
+is shown disabled until that package is available.
+
 ## Premiere Pro CEP integration
 
 Install the included CEP bridge:

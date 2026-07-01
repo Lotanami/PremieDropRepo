@@ -836,15 +836,28 @@ class YouTubeBrowserWindow(QWidget):
             height = int(state["height"])
             host_attached = bool(state.get("attached"))
         except (OSError, ValueError, KeyError, TypeError):
+            append_log(self.log_path, "Browser sync skipped: dock state unavailable")
             return
 
         if not host_attached or width < 100 or height < 100:
+            append_log(
+                self.log_path,
+                "Browser sync skipped: "
+                f"attached={host_attached} width={width} height={height}",
+            )
             return
 
-        if os.name == "nt":
-            self.attach_to_native_parent(parent_hwnd, width, height)
-        else:
-            self.setGeometry(x, y, width, height)
+        try:
+            if os.name == "nt":
+                self.attach_to_native_parent(parent_hwnd, width, height)
+            else:
+                self.setGeometry(x, y, width, height)
+            append_log(
+                self.log_path,
+                f"Browser synced: parent={parent_hwnd} width={width} height={height}",
+            )
+        except Exception as exc:
+            append_log(self.log_path, f"Browser sync failed: {exc!r}")
 
     def attach_to_native_parent(self, parent_hwnd, width, height):
         if not parent_hwnd:

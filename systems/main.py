@@ -8,6 +8,7 @@ import subprocess
 import re
 import mimetypes
 import importlib.util
+import time
 import xml.etree.ElementTree as ET
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
@@ -2214,6 +2215,7 @@ class MainWindow(QMainWindow):
         self.embedded_previous_size = None
         self.download_worker = None
         self.youtube_browser_process = None
+        self.youtube_browser_launch_time = 0
         self.youtube_panel_attached = False
         self.youtube_panel_width = 0
         self.youtube_base_width = BASE_WINDOW_WIDTH
@@ -3252,6 +3254,7 @@ class MainWindow(QMainWindow):
                 os.remove(YOUTUBE_BROWSER_COMMAND_FILE)
             self.set_youtube_panel_attached(True)
             self.publish_youtube_dock_state()
+            self.youtube_browser_launch_time = time.time()
             self.youtube_browser_process = subprocess.Popen(
                 browser_command + [
                     YOUTUBE_DOWNLOAD_REQUEST_FILE,
@@ -3390,6 +3393,13 @@ class MainWindow(QMainWindow):
             return
         attached = status.get("attached")
         if isinstance(attached, bool):
+            if (
+                not attached
+                and self.youtube_browser_process is not None
+                and time.time() - self.youtube_browser_launch_time < 3
+            ):
+                self.publish_youtube_dock_state()
+                return
             self.set_youtube_panel_attached(attached)
 
     def publish_youtube_dock_state(self):

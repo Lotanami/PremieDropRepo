@@ -5,8 +5,9 @@ $repoRoot = Split-Path -Parent $projectRoot
 $installerSource = Join-Path $projectRoot "PremieDropInstaller.py"
 $cepPayload = Join-Path $repoRoot "cep-extension"
 $appPayload = Join-Path $projectRoot "payload\premiedrop.exe"
-$installerVersion = "0.10"
+$installerVersion = "0.11"
 $installerName = "PremieDropInstaller-v$installerVersion"
+$localIcon = Join-Path $projectRoot "premiedrop.ico"
 
 if ($env:PYTHON) {
     $pythonCommand = @($env:PYTHON)
@@ -41,6 +42,10 @@ try {
         "--name", $installerName,
         "--add-data", "$cepPayload;cep-extension"
     )
+    if (Test-Path -LiteralPath $localIcon) {
+        $pyInstallerArgs += @("--icon", $localIcon)
+        $pyInstallerArgs += @("--add-data", "$localIcon;.")
+    }
     if (Test-Path -LiteralPath $appPayload) {
         $pyInstallerArgs += @("--add-binary", "$appPayload;.")
     }

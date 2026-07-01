@@ -7,7 +7,7 @@ editors.
 
 | Path | Purpose |
 |---|---|
-| `PremieDropInstaller-v0.10.exe` | Latest committed Windows installer executable. |
+| GitHub Releases | Latest Windows installer executable. |
 | `cep-extension/` | Premiere Pro CEP bridge package. |
 | `systems/` | PremieDrop application source, build scripts, and developer docs. |
 

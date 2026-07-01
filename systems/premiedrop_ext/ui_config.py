@@ -5,8 +5,8 @@ under ui_plugins/ instead of modifying MainWindow.init_ui().
 """
 
 APP_TEXT = {
-    "window_title": "PremieDrop v0.10",
-    "title": "🎬 PremieDrop v0.10",
+    "window_title": "PremieDrop v0.11",
+    "title": "🎬 PremieDrop v0.11",
     "subtitle": "Your media, one drag away",
     "search_placeholder": "Search files, folders, or sections...",
     "drag_tip": "✦  Select files above and drag them into your editor",

@@ -12,7 +12,7 @@ from urllib.request import urlopen
 
 
 APP_NAME = "PremieDrop"
-APP_VERSION = "v0.10"
+APP_VERSION = "v0.11"
 APP_DISPLAY_NAME = f"{APP_NAME} {APP_VERSION}"
 EXE_NAME = "premiedrop.exe"
 DOWNLOAD_URL = os.environ.get(
@@ -24,6 +24,9 @@ DOWNLOAD_URL = os.environ.get(
 def resource_path(relative_path):
     base_path = getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)
     return Path(base_path) / relative_path
+
+
+APP_ICON_FILE = resource_path("premiedrop.ico")
 
 
 def local_app_dir():
@@ -60,6 +63,8 @@ class InstallerApp(tk.Tk):
         self.geometry("560x460")
         self.minsize(560, 460)
         self.resizable(True, True)
+        if APP_ICON_FILE.exists():
+            self.iconbitmap(default=str(APP_ICON_FILE))
 
         self.install_cep = tk.BooleanVar(value=True)
         self.install_shortcut = tk.BooleanVar(value=True)

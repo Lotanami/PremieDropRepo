@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $projectRoot
+$localIcon = Join-Path $projectRoot "premiedrop.ico"
 
 if ($env:PYTHON) {
     $pythonCommand = @($env:PYTHON)
@@ -30,19 +31,26 @@ try {
     Invoke-PremieDropPython -m pip install -r requirements.txt
     Invoke-PremieDropPython -m pip install -r build-requirements.txt
 
-    Invoke-PremieDropPython -m PyInstaller `
-        --noconfirm `
-        --windowed `
-        --onefile `
-        --name premiedrop `
-        --hidden-import youtube_browser `
-        --collect-all PyQt5.QtWebEngineWidgets `
-        --collect-all PyQt5.QtWebEngineCore `
-        --collect-all PyQtWebEngine `
-        --add-data "premiedrop_ext;premiedrop_ext" `
-        --add-data "import_providers;import_providers" `
-        --add-data "ui_plugins;ui_plugins" `
-        main.py
+    $pyInstallerArgs = @(
+        "--noconfirm",
+        "--windowed",
+        "--onefile",
+        "--name", "premiedrop",
+        "--hidden-import", "youtube_browser",
+        "--collect-all", "PyQt5.QtWebEngineWidgets",
+        "--collect-all", "PyQt5.QtWebEngineCore",
+        "--collect-all", "PyQtWebEngine",
+        "--add-data", "premiedrop_ext;premiedrop_ext",
+        "--add-data", "import_providers;import_providers",
+        "--add-data", "ui_plugins;ui_plugins"
+    )
+    if (Test-Path -LiteralPath $localIcon) {
+        $pyInstallerArgs += @("--icon", $localIcon)
+        $pyInstallerArgs += @("--add-data", "$localIcon;.")
+    }
+    $pyInstallerArgs += "main.py"
+
+    Invoke-PremieDropPython -m PyInstaller @pyInstallerArgs
 
     Write-Host ""
     Write-Host "Built PremieDrop executable:"

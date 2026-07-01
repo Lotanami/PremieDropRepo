@@ -27,13 +27,13 @@ Upload that file to the release URL used by the installer.
 The output is:
 
 ```text
-dist\PremieDropInstaller-v0.10.exe
+dist\PremieDropInstaller-v0.11.exe
 ```
 
 The build script also copies the installer to:
 
 ```text
-..\PremieDropInstaller-v0.10.exe
+..\PremieDropInstaller-v0.11.exe
 ```
 
 For each installer iteration, bump `$installerVersion` in

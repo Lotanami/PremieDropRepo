@@ -67,6 +67,10 @@ YOUTUBE_BROWSER_LOG_FILE = os.path.join(
 YOUTUBE_BROWSER_COMMAND_FILE = os.path.join(
     APP_DATA_DIR, "youtube_browser_command.json"
 )
+APP_ICON_FILE = os.path.join(
+    getattr(sys, "_MEIPASS", os.path.dirname(__file__)),
+    "premiedrop.ico",
+)
 PRESETS_FILE = os.path.join(APP_DATA_DIR, "library_presets.json")
 EDITOR_SETTINGS_FILE = os.path.join(
     APP_DATA_DIR, "editor_import_settings.json"
@@ -4470,8 +4474,12 @@ def main():
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("PremieDrop")
+    if os.path.exists(APP_ICON_FILE):
+        app.setWindowIcon(QIcon(APP_ICON_FILE))
     app.setStyle("Fusion")
     window = MainWindow()
+    if os.path.exists(APP_ICON_FILE):
+        window.setWindowIcon(QIcon(APP_ICON_FILE))
     window.show()
     sys.exit(app.exec_())
 

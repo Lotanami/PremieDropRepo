@@ -55,9 +55,9 @@ class InstallerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("PremieDrop Installer")
-        self.geometry("520x370")
-        self.minsize(520, 370)
-        self.resizable(False, False)
+        self.geometry("560x460")
+        self.minsize(560, 460)
+        self.resizable(True, True)
 
         self.install_cep = tk.BooleanVar(value=True)
         self.install_shortcut = tk.BooleanVar(value=True)
@@ -114,11 +114,11 @@ class InstallerApp(tk.Tk):
         ttk.Label(frame, textvariable=self.status_text).pack(anchor="w")
 
         button_row = ttk.Frame(frame)
-        button_row.pack(fill="x", pady=(18, 0))
+        button_row.pack(side="bottom", fill="x", pady=(18, 0))
 
         self.install_button = ttk.Button(
             button_row,
-            text="Install",
+            text="Install PremieDrop",
             command=self.start_install,
         )
         self.install_button.pack(side="right")

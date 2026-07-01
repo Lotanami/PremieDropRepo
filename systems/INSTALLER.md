@@ -27,13 +27,13 @@ Upload that file to the release URL used by the installer.
 The output is:
 
 ```text
-dist\PremieDropInstaller-v0.11.exe
+dist\PremieDropInstaller-v0.10.exe
 ```
 
 The build script also copies the installer to:
 
 ```text
-..\PremieDropInstaller-v0.11.exe
+..\PremieDropInstaller-v0.10.exe
 ```
 
 For each installer iteration, bump `$installerVersion` in
@@ -42,6 +42,10 @@ For each installer iteration, bump `$installerVersion` in
 Run `build-windows.ps1` before `build-installer.ps1` to bundle the current
 `premiedrop.exe` into the installer. If no app payload exists, the installer
 falls back to downloading `premiedrop.exe` from the configured URL.
+
+The browser-capable `premiedrop.exe` is larger than GitHub's normal per-file
+commit limit, so publish `systems\payload\premiedrop.exe` as a GitHub Release
+asset named `premiedrop.exe` when using the download fallback.
 
 By default, the installer downloads:
 

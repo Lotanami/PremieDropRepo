@@ -3215,19 +3215,24 @@ class MainWindow(QMainWindow):
             self.send_browser_command(tab_name)
             return
 
-        helper_path = os.path.join(
-            os.path.dirname(__file__), "youtube_browser.py"
-        )
-        if not os.path.isfile(helper_path):
-            QMessageBox.warning(
-                self,
-                "Media Browser Missing",
-                f"The browser helper was not found:\n{helper_path}"
-            )
-            return
+        frozen_app = getattr(sys, "frozen", False)
+        helper_path = os.path.join(os.path.dirname(__file__), "youtube_browser.py")
+        if frozen_app:
+            browser_command = [sys.executable, "--premiedrop-browser"]
+            browser_cwd = os.path.dirname(sys.executable)
+        else:
+            if not os.path.isfile(helper_path):
+                QMessageBox.warning(
+                    self,
+                    "Media Browser Missing",
+                    f"The browser helper was not found:\n{helper_path}"
+                )
+                return
+            browser_command = [sys.executable, helper_path]
+            browser_cwd = os.path.dirname(__file__)
 
         launch_options = {
-            "cwd": os.path.dirname(__file__),
+            "cwd": browser_cwd,
         }
         if os.name == "nt":
             launch_options["creationflags"] = getattr(
@@ -3244,9 +3249,7 @@ class MainWindow(QMainWindow):
             self.set_youtube_panel_attached(True)
             self.publish_youtube_dock_state()
             self.youtube_browser_process = subprocess.Popen(
-                [
-                    sys.executable,
-                    helper_path,
+                browser_command + [
                     YOUTUBE_DOWNLOAD_REQUEST_FILE,
                     YOUTUBE_DOCK_STATE_FILE,
                     YOUTUBE_BROWSER_STATUS_FILE,
@@ -4459,6 +4462,11 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--premiedrop-browser":
+        import youtube_browser
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        return youtube_browser.main()
+
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("PremieDrop")

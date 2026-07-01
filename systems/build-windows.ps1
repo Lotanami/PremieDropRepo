@@ -35,6 +35,10 @@ try {
         --windowed `
         --onefile `
         --name premiedrop `
+        --hidden-import youtube_browser `
+        --collect-all PyQt5.QtWebEngineWidgets `
+        --collect-all PyQt5.QtWebEngineCore `
+        --collect-all PyQtWebEngine `
         --add-data "premiedrop_ext;premiedrop_ext" `
         --add-data "import_providers;import_providers" `
         --add-data "ui_plugins;ui_plugins" `

@@ -7,7 +7,7 @@ editors.
 
 | Path | Purpose |
 |---|---|
-| `PremieDropInstaller-v0.11.exe` | Windows installer executable. |
+| `PremieDropInstaller-v0.10.exe` | Latest committed Windows installer executable. |
 | `cep-extension/` | Premiere Pro CEP bridge package. |
 | `systems/` | PremieDrop application source, build scripts, and developer docs. |
 
@@ -29,3 +29,6 @@ cd systems
 
 The installer displays the available editor package options. The Premiere Pro
 CEP extension can be selected; the UXP option is shown disabled until it exists.
+
+Browser-capable builds need the generated `premiedrop.exe` release asset from
+`systems\payload\premiedrop.exe`; it is too large to commit directly to GitHub.

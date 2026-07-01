@@ -12,6 +12,8 @@ from urllib.request import urlopen
 
 
 APP_NAME = "PremieDrop"
+APP_VERSION = "v0.10"
+APP_DISPLAY_NAME = f"{APP_NAME} {APP_VERSION}"
 EXE_NAME = "premiedrop.exe"
 DOWNLOAD_URL = os.environ.get(
     "PREMIEDROP_DOWNLOAD_URL",
@@ -54,7 +56,7 @@ def ps_single_quote(value):
 class InstallerApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PremieDrop Installer")
+        self.title(f"{APP_DISPLAY_NAME} Installer")
         self.geometry("560x460")
         self.minsize(560, 460)
         self.resizable(True, True)
@@ -62,7 +64,9 @@ class InstallerApp(tk.Tk):
         self.install_cep = tk.BooleanVar(value=True)
         self.install_shortcut = tk.BooleanVar(value=True)
         self.install_dir = tk.StringVar(value=str(local_app_dir()))
-        self.status_text = tk.StringVar(value="Ready to install PremieDrop.")
+        self.status_text = tk.StringVar(
+            value=f"Ready to install {APP_DISPLAY_NAME}."
+        )
 
         self._build_ui()
 
@@ -70,7 +74,11 @@ class InstallerApp(tk.Tk):
         frame = ttk.Frame(self, padding=20)
         frame.pack(fill="both", expand=True)
 
-        title = ttk.Label(frame, text="PremieDrop", font=("Segoe UI", 18, "bold"))
+        title = ttk.Label(
+            frame,
+            text=APP_DISPLAY_NAME,
+            font=("Segoe UI", 18, "bold"),
+        )
         title.pack(anchor="w")
 
         subtitle = ttk.Label(
@@ -118,7 +126,7 @@ class InstallerApp(tk.Tk):
 
         self.install_button = ttk.Button(
             button_row,
-            text="Install PremieDrop",
+            text=f"Install {APP_DISPLAY_NAME}",
             command=self.start_install,
         )
         self.install_button.pack(side="right")
@@ -156,7 +164,7 @@ class InstallerApp(tk.Tk):
                 self.set_status("Creating desktop shortcut...")
                 self.create_shortcut(exe_path)
 
-            self.set_status("PremieDrop installed.")
+            self.set_status(f"{APP_DISPLAY_NAME} installed.")
             self.after(0, self.install_complete, exe_path)
         except Exception as exc:
             self.after(0, self.install_failed, exc)
@@ -245,7 +253,7 @@ class InstallerApp(tk.Tk):
 
         if messagebox.askyesno(
             "PremieDrop installed",
-            "PremieDrop installed successfully. Launch it now?",
+            f"{APP_DISPLAY_NAME} installed successfully. Launch it now?",
         ):
             subprocess.Popen([str(exe_path)], cwd=str(exe_path.parent))
             self.destroy()

@@ -3289,18 +3289,26 @@ class MainWindow(QMainWindow):
             pass
 
     def set_youtube_panel_attached(self, attached):
-        if self.youtube_panel_attached == attached:
+        if (
+            self.youtube_panel_attached == attached
+            and (
+                not attached
+                or self.youtube_host.width() >= YOUTUBE_PANEL_MIN_WIDTH
+            )
+        ):
+            self.publish_youtube_dock_state()
             return
 
         available = QApplication.desktop().availableGeometry(self)
         self.youtube_panel_attached = attached
 
         if attached:
-            self.youtube_panel_width = (
-                ATTACHED_BROWSER_WINDOW_WIDTH - self.youtube_base_width
+            self.youtube_panel_width = max(
+                YOUTUBE_PANEL_MIN_WIDTH,
+                ATTACHED_BROWSER_WINDOW_WIDTH - self.youtube_base_width,
             )
             self.youtube_host.setFixedWidth(self.youtube_panel_width)
-            target_width = ATTACHED_BROWSER_WINDOW_WIDTH
+            target_width = self.youtube_base_width + self.youtube_panel_width
         else:
             self.youtube_host.setMinimumWidth(0)
             self.youtube_host.setMaximumWidth(0)
@@ -3388,12 +3396,21 @@ class MainWindow(QMainWindow):
         os.makedirs(APP_DATA_DIR, exist_ok=True)
         host_position = self.youtube_host.mapToGlobal(QPoint(0, 0))
         if self.youtube_panel_attached:
-            self.youtube_panel_width = self.youtube_host.width()
+            self.youtube_panel_width = max(
+                self.youtube_host.width(),
+                self.youtube_panel_width,
+                YOUTUBE_PANEL_MIN_WIDTH,
+            )
+        state_width = (
+            self.youtube_panel_width
+            if self.youtube_panel_attached
+            else self.youtube_host.width()
+        )
         state = {
             "parent_hwnd": int(self.youtube_host.winId()),
             "x": host_position.x(),
             "y": host_position.y(),
-            "width": self.youtube_host.width(),
+            "width": state_width,
             "height": self.youtube_host.height(),
             "attached": self.youtube_panel_attached,
             "visible": self.isVisible(),

@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $projectRoot
 
 if ($env:PYTHON) {
     $pythonCommand = @($env:PYTHON)
@@ -32,6 +33,7 @@ try {
     Invoke-PremieDropPython -m PyInstaller `
         --noconfirm `
         --windowed `
+        --onefile `
         --name premiedrop `
         --add-data "premiedrop_ext;premiedrop_ext" `
         --add-data "import_providers;import_providers" `
@@ -40,7 +42,15 @@ try {
 
     Write-Host ""
     Write-Host "Built PremieDrop executable:"
-    Write-Host (Join-Path $projectRoot "dist\premiedrop\premiedrop.exe")
+    Write-Host (Join-Path $projectRoot "dist\premiedrop.exe")
+
+    New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot "payload") | Out-Null
+    Copy-Item `
+        -LiteralPath (Join-Path $projectRoot "dist\premiedrop.exe") `
+        -Destination (Join-Path $projectRoot "payload\premiedrop.exe") `
+        -Force
+    Write-Host "Copied app payload to:"
+    Write-Host (Join-Path $projectRoot "payload\premiedrop.exe")
 }
 finally {
     Pop-Location

@@ -27,17 +27,21 @@ Upload that file to the release URL used by the installer.
 The output is:
 
 ```text
-dist\PremieDropInstaller-v0.10.exe
+dist\PremieDropInstaller-v0.11.exe
 ```
 
 The build script also copies the installer to:
 
 ```text
-..\PremieDropInstaller-v0.10.exe
+..\PremieDropInstaller-v0.11.exe
 ```
 
 For each installer iteration, bump `$installerVersion` in
 `build-installer.ps1` by `0.01`.
+
+Run `build-windows.ps1` before `build-installer.ps1` to bundle the current
+`premiedrop.exe` into the installer. If no app payload exists, the installer
+falls back to downloading `premiedrop.exe` from the configured URL.
 
 By default, the installer downloads:
 

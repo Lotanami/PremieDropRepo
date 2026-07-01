@@ -140,8 +140,13 @@ class InstallerApp(tk.Tk):
             install_dir.mkdir(parents=True, exist_ok=True)
 
             exe_path = install_dir / EXE_NAME
-            self.set_status("Downloading premiedrop.exe...")
-            self.download_file(DOWNLOAD_URL, exe_path)
+            bundled_exe = resource_path(EXE_NAME)
+            if bundled_exe.exists():
+                self.set_status("Installing bundled premiedrop.exe...")
+                shutil.copy2(bundled_exe, exe_path)
+            else:
+                self.set_status("Downloading premiedrop.exe...")
+                self.download_file(DOWNLOAD_URL, exe_path)
 
             if self.install_cep.get():
                 self.set_status("Installing Premiere Pro CEP extension...")

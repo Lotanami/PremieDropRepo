@@ -4,7 +4,8 @@ $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $projectRoot
 $installerSource = Join-Path $projectRoot "PremieDropInstaller.py"
 $cepPayload = Join-Path $repoRoot "cep-extension"
-$installerVersion = "0.10"
+$appPayload = Join-Path $projectRoot "payload\premiedrop.exe"
+$installerVersion = "0.11"
 $installerName = "PremieDropInstaller-v$installerVersion"
 
 if ($env:PYTHON) {
@@ -33,13 +34,22 @@ Push-Location $projectRoot
 try {
     Invoke-PremieDropPython -m pip install -r build-requirements.txt
 
-    Invoke-PremieDropPython -m PyInstaller `
-        --noconfirm `
-        --windowed `
-        --onefile `
-        --name $installerName `
-        --add-data "$cepPayload;cep-extension" `
-        $installerSource
+    $pyInstallerArgs = @(
+        "--noconfirm",
+        "--windowed",
+        "--onefile",
+        "--name", $installerName,
+        "--add-data", "$cepPayload;cep-extension"
+    )
+    if (Test-Path -LiteralPath $appPayload) {
+        $pyInstallerArgs += @("--add-binary", "$appPayload;.")
+    }
+    else {
+        Write-Warning "No app payload found at $appPayload. Installer will use the download fallback."
+    }
+    $pyInstallerArgs += $installerSource
+
+    Invoke-PremieDropPython -m PyInstaller @pyInstallerArgs
 
     Write-Host ""
     Write-Host "Built PremieDrop installer:"

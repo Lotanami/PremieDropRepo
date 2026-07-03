@@ -12,7 +12,7 @@ from urllib.request import urlopen
 
 
 APP_NAME = "PremieDrop"
-APP_VERSION = "v0.13"
+APP_VERSION = "v0.14"
 APP_DISPLAY_NAME = f"{APP_NAME} {APP_VERSION}"
 EXE_NAME = "premiedrop.exe"
 DOWNLOAD_URL = os.environ.get(

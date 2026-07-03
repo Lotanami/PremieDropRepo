@@ -849,7 +849,7 @@ class YouTubeBrowserWindow(QWidget):
 
         try:
             if os.name == "nt":
-                self.attach_to_native_parent(parent_hwnd, width, height)
+                self.attach_to_native_parent(parent_hwnd, x, y, width, height)
             else:
                 self.setGeometry(x, y, width, height)
             append_log(
@@ -859,7 +859,7 @@ class YouTubeBrowserWindow(QWidget):
         except Exception as exc:
             append_log(self.log_path, f"Browser sync failed: {exc!r}")
 
-    def attach_to_native_parent(self, parent_hwnd, width, height):
+    def attach_to_native_parent(self, parent_hwnd, x, y, width, height):
         if not parent_hwnd:
             return
         user32 = windows_api()
@@ -871,45 +871,17 @@ class YouTubeBrowserWindow(QWidget):
             self.qt_frameless = True
 
         hwnd = int(self.winId())
-        GWL_STYLE = -16
-        WS_CHILD = 0x40000000
-        WS_POPUP = 0x80000000
-        WS_CAPTION = 0x00C00000
-        WS_THICKFRAME = 0x00040000
-        WS_MINIMIZEBOX = 0x00020000
-        WS_MAXIMIZEBOX = 0x00010000
-        WS_SYSMENU = 0x00080000
         SWP_FRAMECHANGED = 0x0020
         SWP_SHOWWINDOW = 0x0040
 
-        if self.native_parent_hwnd != parent_hwnd:
-            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-            style &= ~(
-                WS_POPUP
-                | WS_CAPTION
-                | WS_THICKFRAME
-                | WS_MINIMIZEBOX
-                | WS_MAXIMIZEBOX
-                | WS_SYSMENU
-            )
-            style |= WS_CHILD
-            ctypes.set_last_error(0)
-            user32.SetWindowLongW(hwnd, GWL_STYLE, style)
-            error_code = ctypes.get_last_error()
-            if error_code:
-                raise ctypes.WinError(error_code)
-            ctypes.set_last_error(0)
-            user32.SetParent(hwnd, parent_hwnd)
-            error_code = ctypes.get_last_error()
-            if error_code:
-                raise ctypes.WinError(error_code)
-            self.native_parent_hwnd = parent_hwnd
-
+        # Qt WebEngine can disappear after loading when its top-level window is
+        # force-reparented with SetParent. Keep it top-level and dock by geometry.
         if not user32.SetWindowPos(
-            hwnd, 0, 0, 0, width, height,
+            hwnd, 0, x, y, width, height,
             SWP_FRAMECHANGED | SWP_SHOWWINDOW
         ):
             raise ctypes.WinError(ctypes.get_last_error())
+        self.native_parent_hwnd = 0
 
     def pop_out(self):
         if os.name != "nt":

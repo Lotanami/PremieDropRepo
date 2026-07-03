@@ -10,7 +10,7 @@ import mimetypes
 import importlib.util
 import time
 import xml.etree.ElementTree as ET
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote_plus, unquote, urlparse
 from urllib.request import Request, urlopen
 from datetime import datetime, timezone
 
@@ -2216,6 +2216,14 @@ class MainWindow(QMainWindow):
         self.download_worker = None
         self.youtube_browser_process = None
         self.youtube_browser_launch_time = 0
+        self.embedded_browser_view = None
+        self.embedded_browser_url = None
+        self.embedded_browser_load_label = None
+        self.embedded_browser_menu = None
+        self.embedded_browser_presets = []
+        self.embedded_browser_presets_path = os.path.join(
+            APP_DATA_DIR, "browser_presets.json"
+        )
         self.youtube_panel_attached = False
         self.youtube_panel_width = 0
         self.youtube_base_width = BASE_WINDOW_WIDTH
@@ -2226,6 +2234,7 @@ class MainWindow(QMainWindow):
         )
         self.youtube_request_timer.start()
         self.sections = load_sections()
+        self.load_embedded_browser_presets()
         self.saved_files = self.all_files()
         self.project_folder = load_project_folder()
         sync_import_queue_folder(self.project_folder)
@@ -2606,6 +2615,9 @@ class MainWindow(QMainWindow):
             QSizePolicy.Expanding, QSizePolicy.Expanding
         )
         self.youtube_host.setFixedWidth(0)
+        self.youtube_host_layout = QVBoxLayout(self.youtube_host)
+        self.youtube_host_layout.setContentsMargins(8, 8, 8, 8)
+        self.youtube_host_layout.setSpacing(6)
         window_body_layout.addWidget(self.youtube_host)
 
         layout = QVBoxLayout(central)
@@ -2882,6 +2894,303 @@ class MainWindow(QMainWindow):
 
     def open_website_search(self):
         self.open_media_browser("search")
+
+    def ensure_embedded_browser(self):
+        if self.embedded_browser_view is not None:
+            return self.embedded_browser_view
+
+        try:
+            from PyQt5.QtWebEngineWidgets import QWebEngineView
+        except (ImportError, OSError) as exc:
+            QMessageBox.critical(
+                self,
+                "Media Browser Unavailable",
+                "The embedded browser could not load PyQtWebEngine.\n\n"
+                f"Details: {exc}",
+            )
+            return None
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
+
+        back_btn = QToolButton()
+        back_btn.setText("‹")
+        back_btn.setToolTip("Back")
+        back_btn.setFixedSize(30, 30)
+
+        forward_btn = QToolButton()
+        forward_btn.setText("›")
+        forward_btn.setToolTip("Forward")
+        forward_btn.setFixedSize(30, 30)
+
+        reload_btn = QToolButton()
+        reload_btn.setText("↻")
+        reload_btn.setToolTip("Reload")
+        reload_btn.setFixedSize(30, 30)
+
+        close_btn = QToolButton()
+        close_btn.setText("×")
+        close_btn.setToolTip("Close browser")
+        close_btn.setFixedSize(30, 30)
+
+        browser_tool_style = (
+            "QToolButton {"
+            "background-color: #101024;"
+            "color: #ffffff;"
+            "border: 1px solid #35355f;"
+            "border-radius: 5px;"
+            "font-size: 18px;"
+            "font-weight: bold;"
+            "}"
+            "QToolButton:hover {"
+            "background-color: #24244d;"
+            "border-color: #6C63FF;"
+            "}"
+        )
+        for button in (back_btn, forward_btn, reload_btn, close_btn):
+            button.setStyleSheet(browser_tool_style)
+
+        self.embedded_browser_url = QToolButton()
+        self.embedded_browser_url.setText("Open website")
+        self.embedded_browser_url.setToolTip("Open website")
+        self.embedded_browser_url.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.embedded_browser_url.setPopupMode(QToolButton.InstantPopup)
+        self.embedded_browser_url.setFixedHeight(30)
+        self.embedded_browser_url.setMinimumWidth(220)
+        self.embedded_browser_url.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
+        self.embedded_browser_url.setStyleSheet(
+            "background-color: #101024; color: #eeeeff; "
+            "border: 1px solid #35355f; border-radius: 5px; "
+            "padding: 0 10px; text-align: left;"
+        )
+        self.embedded_browser_menu = QMenu(self.embedded_browser_url)
+        self.embedded_browser_menu.setObjectName("web_menu")
+        self.embedded_browser_menu.aboutToShow.connect(
+            self.refresh_embedded_site_menu
+        )
+        self.embedded_browser_url.setMenu(self.embedded_browser_menu)
+
+        toolbar.addWidget(back_btn)
+        toolbar.addWidget(forward_btn)
+        toolbar.addWidget(reload_btn)
+        toolbar.addWidget(self.embedded_browser_url, 1)
+        toolbar.addWidget(close_btn)
+        self.youtube_host_layout.addLayout(toolbar)
+
+        self.embedded_browser_load_label = QLabel("")
+        self.embedded_browser_load_label.setStyleSheet(
+            "color: #8888aa; font-size: 11px;"
+        )
+        self.youtube_host_layout.addWidget(self.embedded_browser_load_label)
+
+        view = QWebEngineView(self.youtube_host)
+        view.setStyleSheet("background-color: #111126;")
+        self.youtube_host_layout.addWidget(view, 1)
+        self.embedded_browser_view = view
+
+        back_btn.clicked.connect(view.back)
+        forward_btn.clicked.connect(view.forward)
+        reload_btn.clicked.connect(view.reload)
+        close_btn.clicked.connect(self.close_embedded_browser)
+        view.urlChanged.connect(
+            lambda url: self.update_embedded_browser_url(url.toString())
+        )
+        view.loadStarted.connect(
+            lambda: self.embedded_browser_load_label.setText("Loading...")
+        )
+        view.loadFinished.connect(
+            lambda ok: self.embedded_browser_load_label.setText(
+                "" if ok else "Page failed to load."
+            )
+        )
+        self.refresh_embedded_site_menu()
+        return view
+
+    def load_embedded_browser_presets(self):
+        self.embedded_browser_presets = []
+        try:
+            with open(
+                self.embedded_browser_presets_path, "r", encoding="utf-8"
+            ) as presets_file:
+                data = json.load(presets_file)
+        except (OSError, ValueError):
+            return
+
+        for item in data.get("presets", []):
+            name = item.get("name", "")
+            url = item.get("url", "")
+            if isinstance(name, str) and isinstance(url, str) and name and url:
+                self.embedded_browser_presets.append({"name": name, "url": url})
+
+        existing_urls = {preset["url"] for preset in self.embedded_browser_presets}
+        for item in data.get("websites", []):
+            name = item.get("label", "") or item.get("name", "")
+            url = item.get("url", "")
+            if (
+                isinstance(name, str)
+                and isinstance(url, str)
+                and name
+                and url
+                and url not in existing_urls
+            ):
+                self.embedded_browser_presets.append({"name": name, "url": url})
+                existing_urls.add(url)
+
+    def save_embedded_browser_presets(self):
+        os.makedirs(os.path.dirname(self.embedded_browser_presets_path), exist_ok=True)
+        temporary_path = f"{self.embedded_browser_presets_path}.tmp"
+        data = {
+            "websites": [],
+            "presets": self.embedded_browser_presets,
+        }
+        try:
+            with open(temporary_path, "w", encoding="utf-8") as presets_file:
+                json.dump(data, presets_file, indent=2)
+            os.replace(temporary_path, self.embedded_browser_presets_path)
+        except OSError:
+            pass
+
+    def update_embedded_browser_url(self, url):
+        if self.embedded_browser_url is None:
+            return
+        text = url if url and url != "about:blank" else "Open website"
+        self.embedded_browser_url.setText(text)
+        self.embedded_browser_url.setToolTip(text)
+
+    def refresh_embedded_site_menu(self):
+        if self.embedded_browser_menu is None:
+            return
+        self.embedded_browser_menu.clear()
+        youtube_action = self.embedded_browser_menu.addAction("YouTube")
+        youtube_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("youtube")
+        )
+        myinstants_action = self.embedded_browser_menu.addAction("MyInstants")
+        myinstants_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("myinstants")
+        )
+        self.embedded_browser_menu.addSeparator()
+        website_action = self.embedded_browser_menu.addAction("Search Website...")
+        website_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("search")
+        )
+        images_action = self.embedded_browser_menu.addAction("Search Images...")
+        images_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("images")
+        )
+
+        if self.embedded_browser_presets:
+            self.embedded_browser_menu.addSeparator()
+        for index, preset in enumerate(self.embedded_browser_presets):
+            preset_action = self.embedded_browser_menu.addAction(
+                f"Preset: {preset['name']}"
+            )
+            preset_action.triggered.connect(
+                lambda _checked=False, i=index:
+                self.open_embedded_browser_url(
+                    self.embedded_browser_presets[i]["url"]
+                )
+            )
+
+        self.embedded_browser_menu.addSeparator()
+        save_action = self.embedded_browser_menu.addAction("Save Current as Preset")
+        save_action.triggered.connect(self.save_current_embedded_preset)
+        remove_action = self.embedded_browser_menu.addAction("Remove Current Preset")
+        remove_action.setEnabled(self.current_embedded_preset_index() is not None)
+        remove_action.triggered.connect(self.remove_current_embedded_preset)
+
+    def save_current_embedded_preset(self):
+        if self.embedded_browser_view is None:
+            return
+        url = self.embedded_browser_view.url().toString()
+        if not url or url == "about:blank":
+            return
+        title = self.embedded_browser_view.title().strip()
+        default_name = title or urlparse(url).netloc or f"Preset {len(self.embedded_browser_presets) + 1}"
+        name, accepted = QInputDialog.getText(
+            self,
+            "Save Website Preset",
+            "Preset name:",
+            text=default_name,
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+        self.embedded_browser_presets = [
+            preset
+            for preset in self.embedded_browser_presets
+            if not (preset["name"] == name or preset["url"] == url)
+        ]
+        self.embedded_browser_presets.append({"name": name, "url": url})
+        self.save_embedded_browser_presets()
+        self.refresh_embedded_site_menu()
+
+    def current_embedded_preset_index(self):
+        if self.embedded_browser_view is None:
+            return None
+        url = self.embedded_browser_view.url().toString()
+        for index, preset in enumerate(self.embedded_browser_presets):
+            if preset["url"] == url:
+                return index
+        return None
+
+    def remove_current_embedded_preset(self):
+        preset_index = self.current_embedded_preset_index()
+        if preset_index is None:
+            return
+        self.embedded_browser_presets.pop(preset_index)
+        self.save_embedded_browser_presets()
+        self.refresh_embedded_site_menu()
+
+    def close_embedded_browser(self):
+        if self.embedded_browser_view is not None:
+            self.embedded_browser_view.setUrl(QUrl("about:blank"))
+        self.set_youtube_panel_attached(False)
+
+    def open_embedded_browser_url(self, target_url):
+        if not target_url:
+            return
+        view = self.ensure_embedded_browser()
+        if view is None:
+            return
+        self.set_youtube_panel_attached(True)
+        view.setUrl(QUrl(target_url))
+        view.setFocus()
+        self.update_embedded_browser_url(target_url)
+        self.refresh_embedded_site_menu()
+
+    def embedded_browser_url_for_tab(self, tab_name):
+        if tab_name == "youtube":
+            return YOUTUBE_HOME_URL
+        if tab_name == "myinstants":
+            return MYINSTANTS_HOME_URL
+        if tab_name == "images":
+            query, accepted = QInputDialog.getText(
+                self,
+                "Search Images",
+                "What images are you looking for?",
+            )
+            query = query.strip()
+            if not accepted or not query:
+                return ""
+            return f"https://www.google.com/search?tbm=isch&q={quote_plus(query)}"
+        if tab_name == "search":
+            query, accepted = QInputDialog.getText(
+                self,
+                "Search Website",
+                "Enter a website address or search:",
+            )
+            query = query.strip()
+            if not accepted or not query:
+                return ""
+            if "://" in query:
+                return query
+            if "." in query and " " not in query:
+                return f"https://{query}"
+            return f"https://www.google.com/search?q={quote_plus(query)}"
+        return ""
 
     def apply_theme_config(self):
         stylesheet = self.styleSheet()
@@ -3213,6 +3522,10 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def open_media_browser(self, tab_name):
+        target_url = self.embedded_browser_url_for_tab(tab_name)
+        self.open_embedded_browser_url(target_url)
+        return
+
         if (
             self.youtube_browser_process is not None
             and self.youtube_browser_process.poll() is None

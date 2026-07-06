@@ -47,11 +47,13 @@ try:
 except ImportError:
     yt_dlp = None
 
-SAVE_FILE = os.path.join(os.path.dirname(__file__), "saved_files.json")
+APP_ROOT = os.path.dirname(__file__)
 APP_DATA_DIR = os.path.join(
     os.environ.get("APPDATA", os.path.dirname(__file__)),
     "PremieDrop"
 )
+SAVE_FILE = os.path.join(APP_DATA_DIR, "saved_files.json")
+LEGACY_SAVE_FILE = os.path.join(APP_ROOT, "saved_files.json")
 IMPORT_QUEUE_FILE = os.path.join(APP_DATA_DIR, "premiedrop_import_queue.json")
 YOUTUBE_DOWNLOAD_REQUEST_FILE = os.path.join(
     APP_DATA_DIR, "youtube_download_request.json"
@@ -76,10 +78,17 @@ PRESETS_FILE = os.path.join(APP_DATA_DIR, "library_presets.json")
 EDITOR_SETTINGS_FILE = os.path.join(
     APP_DATA_DIR, "editor_import_settings.json"
 )
-VIDEO_THUMB_DIR = os.path.join(os.path.dirname(__file__), "thumbnail_cache")
+VIDEO_THUMB_DIR = os.path.join(APP_DATA_DIR, "thumbnail_cache")
 THUMB_SIZE = 112
 LARGE_VIDEO_BYTES = 1 * 1024 * 1024 * 1024
 VIDEO_THUMBNAIL_ICONS = {}
+BROWSER_STORAGE_APP_NAMES = (
+    "PremieDrop",
+    "PremieDrop Media Browser",
+    "PremieDrop MyInstants",
+    "PremieDrop YouTube",
+)
+BROWSER_STORAGE_CHILDREN = ("cache", "QtWebEngine")
 
 DEFAULT_SECTIONS = [
     "Large Video Files (1GB>)",
@@ -113,6 +122,49 @@ def scaled_image_preview_height():
 
 def scaled_image_preview_value(value, minimum=1):
     return max(minimum, int(round(value * IMAGE_PREVIEW_SCALE)))
+
+def human_size(size):
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{size} B"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+def local_app_data_dir():
+    root = os.environ.get("LOCALAPPDATA")
+    if root:
+        return root
+    if os.name == "nt":
+        return os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    return os.path.join(os.path.expanduser("~"), ".cache")
+
+def path_is_inside(parent, child):
+    try:
+        return os.path.commonpath([
+            os.path.abspath(parent),
+            os.path.abspath(child),
+        ]) == os.path.abspath(parent)
+    except ValueError:
+        return False
+
+def clear_browser_storage_on_startup():
+    local_root = os.path.abspath(local_app_data_dir())
+    for app_name in BROWSER_STORAGE_APP_NAMES:
+        app_storage_dir = os.path.abspath(os.path.join(local_root, app_name))
+        if not path_is_inside(local_root, app_storage_dir):
+            continue
+        for child_name in BROWSER_STORAGE_CHILDREN:
+            storage_path = os.path.abspath(
+                os.path.join(app_storage_dir, child_name)
+            )
+            if not path_is_inside(app_storage_dir, storage_path):
+                continue
+            if not os.path.isdir(storage_path):
+                continue
+            try:
+                shutil.rmtree(storage_path)
+            except OSError:
+                pass
 
 SUPPORTED_EXTENSIONS = {
     "video": [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v"],
@@ -231,15 +283,21 @@ def get_video_thumbnail(path):
     except (OSError, subprocess.SubprocessError):
         return None
 
-def load_saved_files():
-    if os.path.exists(SAVE_FILE):
+def load_save_data():
+    for path in (SAVE_FILE, LEGACY_SAVE_FILE):
+        if not os.path.exists(path):
+            continue
         try:
-            with open(SAVE_FILE, "r") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("saved_files", [])
-        except Exception:
-            return []
-    return []
+            if isinstance(data, dict):
+                return data
+        except (OSError, ValueError):
+            continue
+    return {}
+
+def load_saved_files():
+    return load_save_data().get("saved_files", [])
 
 def make_empty_sections():
     return [{"name": name, "files": []} for name in DEFAULT_SECTIONS]
@@ -511,49 +569,40 @@ def connect_to_davinci_resolve():
     return loaded_module.scriptapp("Resolve")
 
 def load_sections():
-    if os.path.exists(SAVE_FILE):
-        try:
-            with open(SAVE_FILE, "r") as f:
-                data = json.load(f)
-            if "sections" in data:
-                return normalize_sections(data.get("sections", []))
-            sections = make_empty_sections()
-            for path in data.get("saved_files", []):
-                norm = os.path.normpath(path)
-                target = section_for_file(norm)
-                for section in sections:
-                    if section["name"] == target:
-                        section["files"].append(norm)
-                        break
-            return normalize_sections(sections)
-        except Exception:
-            pass
+    data = load_save_data()
+    if "sections" in data:
+        return normalize_sections(data.get("sections", []))
+    if data:
+        sections = make_empty_sections()
+        for path in data.get("saved_files", []):
+            norm = os.path.normpath(path)
+            target = section_for_file(norm)
+            for section in sections:
+                if section["name"] == target:
+                    section["files"].append(norm)
+                    break
+        return normalize_sections(sections)
     return make_empty_sections()
 
 def load_project_folder():
-    if os.path.exists(SAVE_FILE):
-        try:
-            with open(SAVE_FILE, "r") as f:
-                data = json.load(f)
-                return data.get("project_folder", "")
-        except Exception:
-            return ""
-    return ""
+    return load_save_data().get("project_folder", "")
 
-def save_files(file_list, project_folder="", sections=None):
-    existing = {}
-    if os.path.exists(SAVE_FILE):
-        try:
-            with open(SAVE_FILE, "r") as f:
-                existing = json.load(f)
-        except Exception:
-            pass
+def load_last_download_folder():
+    return load_save_data().get("last_download_folder", "")
+
+def save_files(
+    file_list, project_folder="", sections=None, last_download_folder=None
+):
+    existing = load_save_data()
     existing["saved_files"] = file_list
     if sections is not None:
         existing["sections"] = sections
     if project_folder:
         existing["project_folder"] = project_folder
-    with open(SAVE_FILE, "w") as f:
+    if last_download_folder is not None:
+        existing["last_download_folder"] = last_download_folder
+    os.makedirs(os.path.dirname(SAVE_FILE), exist_ok=True)
+    with open(SAVE_FILE, "w", encoding="utf-8") as f:
         json.dump(existing, f, indent=2)
 
 def load_presets():
@@ -797,6 +846,192 @@ class AutoSortDropBox(QLabel):
             if hasattr(main, "add_files"):
                 main.add_files(paths)
             event.acceptProposedAction()
+
+
+class ClickableFolderLabel(QLabel):
+    clicked = pyqtSignal()
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.active = False
+        self.hovered = False
+        self.setCursor(Qt.ArrowCursor)
+
+    def set_active(self, active):
+        self.active = active
+        self.setCursor(Qt.PointingHandCursor if active else Qt.ArrowCursor)
+        self.refresh_style()
+
+    def refresh_style(self):
+        if self.active:
+            decoration = "text-decoration: underline;" if self.hovered else ""
+            self.setStyleSheet(
+                "color: #44aa66; font-size: 11px; "
+                f"{decoration}"
+            )
+        else:
+            self.setStyleSheet(
+                "color: #555577; font-size: 11px; font-style: italic;"
+            )
+
+    def enterEvent(self, event):
+        self.hovered = True
+        self.refresh_style()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.hovered = False
+        self.refresh_style()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.active and event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class FolderContentsDialog(QDialog):
+    def __init__(self, folder, parent=None):
+        super().__init__(parent)
+        self.root_folder = os.path.abspath(folder)
+        self.current_folder = self.root_folder
+        self.setWindowTitle("Folder Contents")
+        self.resize(520, 520)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1a1a2e;
+                color: #ddddef;
+            }
+            QLabel {
+                color: #aaaac6;
+                font-size: 11px;
+            }
+            QListWidget {
+                background-color: #16213e;
+                border: 1px solid #2a2a4a;
+                border-radius: 8px;
+                color: #ddddef;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 7px 8px;
+                border-radius: 5px;
+            }
+            QListWidget::item:selected {
+                background-color: #6C63FF;
+                color: #ffffff;
+            }
+            QPushButton {
+                min-height: 30px;
+                padding: 5px 12px;
+                background-color: #24244d;
+                color: white;
+                border: 1px solid #45456f;
+                border-radius: 5px;
+            }
+            QPushButton:disabled {
+                color: #666680;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
+
+        self.path_label = QLabel("")
+        self.path_label.setWordWrap(True)
+        layout.addWidget(self.path_label)
+
+        self.file_list = QListWidget()
+        self.file_list.setIconSize(QSize(THUMB_SIZE, THUMB_SIZE))
+        self.file_list.itemDoubleClicked.connect(self.open_item)
+        layout.addWidget(self.file_list, 1)
+
+        button_row = QHBoxLayout()
+        self.up_btn = QPushButton("Up")
+        self.up_btn.clicked.connect(self.go_up)
+        self.add_btn = QPushButton("Add Selected")
+        self.add_btn.clicked.connect(self.add_selected)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        button_row.addWidget(self.up_btn)
+        button_row.addStretch()
+        button_row.addWidget(self.add_btn)
+        button_row.addWidget(close_btn)
+        layout.addLayout(button_row)
+
+        self.refresh()
+
+    def refresh(self):
+        self.file_list.clear()
+        self.path_label.setText(self.current_folder)
+        self.up_btn.setEnabled(self.current_folder != self.root_folder)
+        try:
+            entries = sorted(
+                os.scandir(self.current_folder),
+                key=lambda entry: (not entry.is_dir(), entry.name.casefold()),
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "Folder Error", str(exc))
+            return
+
+        for entry in entries:
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                continue
+            label = f"[Folder] {entry.name}" if is_dir else entry.name
+            if not is_dir:
+                try:
+                    label = f"{label}  -  {human_size(os.path.getsize(entry.path))}"
+                except OSError:
+                    pass
+            item = QListWidgetItem(label)
+            if is_dir:
+                item.setText(f"[Folder] {entry.name}")
+                item.setSizeHint(QSize(0, 38))
+            else:
+                file_type = get_file_type(entry.path)
+                if file_type == "image":
+                    thumbnail = get_image_thumbnail(entry.path)
+                    if thumbnail:
+                        item.setIcon(thumbnail)
+                elif file_type == "video":
+                    thumbnail = get_video_thumbnail(entry.path)
+                    if thumbnail:
+                        item.setIcon(thumbnail)
+                if file_type in ("image", "video"):
+                    item.setSizeHint(QSize(0, THUMB_SIZE + 12))
+                else:
+                    item.setSizeHint(QSize(0, 42))
+            item.setData(Qt.UserRole, entry.path)
+            item.setData(Qt.UserRole + 1, is_dir)
+            item.setToolTip(entry.path)
+            self.file_list.addItem(item)
+
+    def open_item(self, item):
+        path = item.data(Qt.UserRole)
+        if item.data(Qt.UserRole + 1):
+            self.current_folder = path
+            self.refresh()
+
+    def go_up(self):
+        parent = os.path.dirname(self.current_folder)
+        if path_is_inside(self.root_folder, parent):
+            self.current_folder = parent
+            self.refresh()
+
+    def add_selected(self):
+        main = self.parent()
+        paths = []
+        for item in self.file_list.selectedItems():
+            path = item.data(Qt.UserRole)
+            if not item.data(Qt.UserRole + 1) and path:
+                paths.append(path)
+        if paths and hasattr(main, "add_files"):
+            main.add_files(paths)
 
 
 class SectionDropBox(QWidget):
@@ -2237,6 +2472,7 @@ class MainWindow(QMainWindow):
         self.load_embedded_browser_presets()
         self.saved_files = self.all_files()
         self.project_folder = load_project_folder()
+        self.last_download_folder = load_last_download_folder()
         sync_import_queue_folder(self.project_folder)
         self.init_ui()
         self.populate_list()
@@ -2267,7 +2503,12 @@ class MainWindow(QMainWindow):
 
     def save_library(self):
         self.saved_files = self.all_files()
-        save_files(self.saved_files, self.project_folder, self.sections)
+        save_files(
+            self.saved_files,
+            self.project_folder,
+            self.sections,
+            self.last_download_folder,
+        )
 
     def find_section(self, section_name):
         for section in self.sections:
@@ -2765,10 +3006,11 @@ class MainWindow(QMainWindow):
         folder_row = QHBoxLayout()
         folder_row.setSpacing(8)
 
-        self.folder_label = QLabel("No project folder set")
+        self.folder_label = ClickableFolderLabel("No project folder set")
         self.folder_label.setObjectName("folder_label")
         self.folder_label.setProperty("active", False)
         self.folder_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.folder_label.clicked.connect(self.show_project_folder_contents)
 
         set_folder_btn = QPushButton("📁  Set Folder")
         set_folder_btn.setObjectName("set_folder_btn")
@@ -3522,10 +3764,6 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def open_media_browser(self, tab_name):
-        target_url = self.embedded_browser_url_for_tab(tab_name)
-        self.open_embedded_browser_url(target_url)
-        return
-
         if (
             self.youtube_browser_process is not None
             and self.youtube_browser_process.poll() is None
@@ -3774,7 +4012,9 @@ class MainWindow(QMainWindow):
             )
             return
 
-        default_folder = self.project_folder
+        default_folder = self.last_download_folder
+        if not default_folder or not os.path.isdir(default_folder):
+            default_folder = self.project_folder
         if not default_folder or not os.path.isdir(default_folder):
             default_folder = os.path.join(
                 os.path.expanduser("~"),
@@ -3809,6 +4049,9 @@ class MainWindow(QMainWindow):
         dialog.url_input.setCursorPosition(len(initial_url))
         if dialog.exec_() != QDialog.Accepted:
             return
+        settings = dialog.settings()
+        self.last_download_folder = settings["folder"]
+        self.save_library()
 
         self.download_progress.setValue(0)
         self.download_status.setText("Starting download...")
@@ -3816,10 +4059,10 @@ class MainWindow(QMainWindow):
 
         worker_class = (
             DirectFileDownloadWorker
-            if dialog.settings()["download_type"] == "direct"
+            if settings["download_type"] == "direct"
             else DownloadWorker
         )
-        self.download_worker = worker_class(dialog.settings(), self)
+        self.download_worker = worker_class(settings, self)
         self.download_worker.progress.connect(self.update_download_progress)
         self.download_worker.completed.connect(self.download_completed)
         self.download_worker.failed.connect(self.download_failed)
@@ -4170,16 +4413,21 @@ class MainWindow(QMainWindow):
             name = os.path.basename(self.project_folder)
             self.folder_label.setText(f"→  {name}")
             self.folder_label.setToolTip(self.project_folder)
-            self.folder_label.setStyleSheet("color: #44aa66; font-size: 11px;")
             self.copy_btn.setEnabled(True)
         else:
             self.folder_label.setText("No project folder set")
             self.folder_label.setToolTip("")
-            self.folder_label.setStyleSheet("color: #555577; font-size: 11px; font-style: italic;")
             self.copy_btn.setEnabled(True)
+        self.folder_label.set_active(folder_active)
         self.update_import_button_tooltip()
         self.auto_organize_btn.setEnabled(folder_active)
         self.reload_assets_btn.setEnabled(folder_active)
+
+    def show_project_folder_contents(self):
+        if not self.project_folder or not os.path.isdir(self.project_folder):
+            return
+        dialog = FolderContentsDialog(self.project_folder, self)
+        dialog.exec_()
 
     def preset_section_folders(self):
         return {
@@ -4811,6 +5059,7 @@ def main():
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         return youtube_browser.main()
 
+    clear_browser_storage_on_startup()
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setApplicationName("PremieDrop")

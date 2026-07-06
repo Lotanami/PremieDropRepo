@@ -15,6 +15,13 @@ PremieDropBridge.result = function (ok, imported, skipped, error) {
         ',"error":"' + PremieDropBridge.escapeJson(error || "") + '"}';
 };
 
+PremieDropBridge.parseFiles = function (filesJson) {
+    if (typeof JSON !== "undefined" && JSON.parse) {
+        return JSON.parse(filesJson);
+    }
+    return eval("(" + filesJson + ")");
+};
+
 PremieDropBridge.findOrCreateBin = function (name) {
     var root = app.project.rootItem;
     var i;
@@ -62,7 +69,7 @@ PremieDropBridge.importFiles = function (filesJson, forceImport) {
             return PremieDropBridge.result(false, 0, 0, "No Premiere project is open.");
         }
 
-        var files = JSON.parse(filesJson);
+        var files = PremieDropBridge.parseFiles(filesJson);
         var grouped = {};
         var existing = {};
         var section;

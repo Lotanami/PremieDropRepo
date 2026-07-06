@@ -34,6 +34,7 @@ try {
     $pyInstallerArgs = @(
         "--noconfirm",
         "--windowed",
+        "--noupx",
         "--onefile",
         "--name", "premiedrop",
         "--hidden-import", "youtube_browser",

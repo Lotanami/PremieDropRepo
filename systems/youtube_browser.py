@@ -3,6 +3,7 @@ from ctypes import wintypes
 import json
 import mimetypes
 import os
+import shutil
 import sys
 import time
 import traceback
@@ -19,6 +20,7 @@ from PyQt5.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -34,6 +36,58 @@ def append_log(log_path, message):
             log_file.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
     except OSError:
         pass
+
+
+BROWSER_STORAGE_APP_NAMES = (
+    "PremieDrop",
+    "PremieDrop Media Browser",
+    "PremieDrop MyInstants",
+    "PremieDrop YouTube",
+)
+BROWSER_STORAGE_CHILDREN = ("cache", "QtWebEngine")
+
+
+def local_app_data_dir():
+    root = os.environ.get("LOCALAPPDATA")
+    if root:
+        return root
+    if os.name == "nt":
+        return os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    return os.path.join(os.path.expanduser("~"), ".cache")
+
+
+def path_is_inside(parent, child):
+    try:
+        return os.path.commonpath([
+            os.path.abspath(parent),
+            os.path.abspath(child),
+        ]) == os.path.abspath(parent)
+    except ValueError:
+        return False
+
+
+def clear_browser_storage_on_startup(log_path=""):
+    local_root = os.path.abspath(local_app_data_dir())
+    for app_name in BROWSER_STORAGE_APP_NAMES:
+        app_storage_dir = os.path.abspath(os.path.join(local_root, app_name))
+        if not path_is_inside(local_root, app_storage_dir):
+            continue
+        for child_name in BROWSER_STORAGE_CHILDREN:
+            storage_path = os.path.abspath(
+                os.path.join(app_storage_dir, child_name)
+            )
+            if not path_is_inside(app_storage_dir, storage_path):
+                continue
+            if not os.path.isdir(storage_path):
+                continue
+            try:
+                shutil.rmtree(storage_path)
+                append_log(log_path, f"Cleared browser storage: {storage_path}")
+            except OSError as exc:
+                append_log(
+                    log_path,
+                    f"Could not clear browser storage {storage_path}: {exc}",
+                )
 
 
 def windows_api():
@@ -160,9 +214,17 @@ class YouTubeBrowserWindow(QWidget):
                 border-color: #a63f50;
                 font-weight: bold;
             }
+            QPushButton#site_dropdown {
+                background-color: #101024;
+                border-color: #45456f;
+                color: #ffffff;
+                text-align: left;
+                padding: 0px 10px;
+            }
             QPushButton#youtube_home:hover,
             QPushButton#myinstants_home:hover,
             QPushButton#images_home:hover,
+            QPushButton#site_dropdown:hover,
             QPushButton#youtube_download:hover,
             QPushButton#attach_toggle:hover,
             QPushButton#close_browser:hover {
@@ -220,24 +282,14 @@ class YouTubeBrowserWindow(QWidget):
         reload_btn.clicked.connect(self.reload_page)
         controls.addWidget(reload_btn)
 
-        self.youtube_tab_btn = QPushButton("YouTube")
-        self.youtube_tab_btn.setObjectName("youtube_home")
-        self.youtube_tab_btn.clicked.connect(
-            lambda: self.switch_tab("youtube")
-        )
-        controls.addWidget(self.youtube_tab_btn)
-
-        self.myinstants_tab_btn = QPushButton("MyInstants")
-        self.myinstants_tab_btn.setObjectName("myinstants_home")
-        self.myinstants_tab_btn.clicked.connect(
-            lambda: self.switch_tab("myinstants")
-        )
-        controls.addWidget(self.myinstants_tab_btn)
-
         self.images_tab_btn = QPushButton("🔍")
-        self.images_tab_btn.setObjectName("images_home")
-        self.images_tab_btn.setToolTip("Open saved image searches")
-        self.images_tab_btn.setFixedWidth(72)
+        self.images_tab_btn.setObjectName("site_dropdown")
+        self.images_tab_btn.setText("Open website")
+        self.images_tab_btn.setToolTip("Open website")
+        self.images_tab_btn.setMinimumWidth(260)
+        self.images_tab_btn.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed
+        )
         self.images_menu = QMenu(self.images_tab_btn)
         self.images_menu.setToolTipsVisible(True)
         self.images_menu.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -246,7 +298,7 @@ class YouTubeBrowserWindow(QWidget):
         )
         self.images_menu.aboutToShow.connect(self.rebuild_images_menu)
         self.images_tab_btn.setMenu(self.images_menu)
-        controls.addWidget(self.images_tab_btn)
+        controls.addWidget(self.images_tab_btn, 1)
 
         self.attach_btn = QPushButton("Pop Out")
         self.attach_btn.setObjectName("attach_toggle")
@@ -261,13 +313,13 @@ class YouTubeBrowserWindow(QWidget):
 
         controls.addStretch()
 
-        self.download_btn = QPushButton("DL URL")
+        self.download_btn = QPushButton("↓")
         self.download_btn.setObjectName("youtube_download")
         self.download_btn.setToolTip(
             "Open the current YouTube URL in PremieDrop's downloader"
         )
-        self.download_btn.setFixedWidth(58)
-        self.download_btn.setStyleSheet("font-size: 10px; padding: 0px 6px;")
+        self.download_btn.setFixedWidth(38)
+        self.download_btn.setStyleSheet("font-size: 18px; padding: 0px;")
         self.download_btn.clicked.connect(self.send_download_request)
         controls.addWidget(self.download_btn)
         layout.addLayout(controls)
@@ -280,6 +332,10 @@ class YouTubeBrowserWindow(QWidget):
             web_view.titleChanged.connect(
                 lambda title, name=tab_name:
                 self.update_page_title(name, title)
+            )
+            web_view.urlChanged.connect(
+                lambda url, name=tab_name:
+                self.update_site_dropdown_url(name, url.toString())
             )
             web_view.setUrl(QUrl(site["url"]))
             self.web_views[tab_name] = web_view
@@ -347,17 +403,24 @@ class YouTubeBrowserWindow(QWidget):
         query = query.strip()
         if not accepted or not query:
             return
-        search_url = (
-            "https://www.google.com/search?tbm=isch&q="
-            f"{quote_plus(query)}"
-        )
+        search_url = self.image_search_url(query)
         search_id = self.next_image_search_id
         self.next_image_search_id += 1
         self.image_searches[search_id] = {
             "label": query,
             "url": search_url,
         }
+        self.save_browser_state()
         self.open_saved_image_search(search_id)
+
+    def image_search_url(self, query):
+        return (
+            "https://www.google.com/search?tbm=isch&q="
+            f"{quote_plus(query)}"
+        )
+
+    def usable_browser_url(self, url):
+        return isinstance(url, str) and bool(url) and url != "about:blank"
 
     def search_website(self):
         query, accepted = QInputDialog.getText(
@@ -427,8 +490,15 @@ class YouTubeBrowserWindow(QWidget):
         return web_view
 
     def save_image_search_url(self, search_id, url):
-        if search_id in self.image_searches:
-            self.image_searches[search_id]["url"] = url.toString()
+        url_text = url.toString()
+        if search_id in self.image_searches and self.usable_browser_url(url_text):
+            self.image_searches[search_id]["url"] = url_text
+            self.save_browser_state()
+        if (
+            self.current_tab == "images"
+            and self.active_image_search_id == search_id
+        ):
+            self.update_site_dropdown_text(url_text)
 
     def unload_active_image_view(self):
         search_id = self.active_image_search_id
@@ -437,9 +507,10 @@ class YouTubeBrowserWindow(QWidget):
         key = self.image_view_key(search_id)
         web_view = self.web_views.pop(key, None)
         if web_view is not None:
-            self.image_searches[search_id]["url"] = (
-                web_view.url().toString()
-            )
+            current_url = web_view.url().toString()
+            if self.usable_browser_url(current_url):
+                self.image_searches[search_id]["url"] = current_url
+                self.save_browser_state()
             self.tabs.removeWidget(web_view)
             web_view.setUrl(QUrl("about:blank"))
             web_view.deleteLater()
@@ -466,6 +537,13 @@ class YouTubeBrowserWindow(QWidget):
 
     def rebuild_images_menu(self):
         self.images_menu.clear()
+        youtube_action = self.images_menu.addAction("YouTube")
+        youtube_action.triggered.connect(lambda: self.switch_tab("youtube"))
+        myinstants_action = self.images_menu.addAction("MyInstants")
+        myinstants_action.triggered.connect(
+            lambda: self.switch_tab("myinstants")
+        )
+        self.images_menu.addSeparator()
         website_action = self.images_menu.addAction("Search Website")
         website_action.triggered.connect(self.search_website)
         image_action = self.images_menu.addAction("Search Images")
@@ -555,8 +633,10 @@ class YouTubeBrowserWindow(QWidget):
             self.unload_active_image_view()
             self.switch_tab("search")
         self.image_searches.pop(search_id, None)
+        self.save_browser_state()
 
     def load_browser_state(self):
+        changed_state = False
         try:
             with open(
                 self.browser_presets_path, "r", encoding="utf-8"
@@ -575,6 +655,21 @@ class YouTubeBrowserWindow(QWidget):
                 "label": label,
                 "url": url,
             }
+        saved_images = state.get("images", state.get("image_searches", []))
+        for search in saved_images:
+            label = str(search.get("label", "")).strip()
+            url = str(search.get("url", "")).strip()
+            if not label:
+                continue
+            if not self.usable_browser_url(url):
+                url = self.image_search_url(label)
+                changed_state = True
+            search_id = self.next_image_search_id
+            self.next_image_search_id += 1
+            self.image_searches[search_id] = {
+                "label": label,
+                "url": url,
+            }
         self.browser_presets = [
             {
                 "name": str(preset.get("name", "")).strip(),
@@ -583,12 +678,15 @@ class YouTubeBrowserWindow(QWidget):
             for preset in state.get("presets", [])
             if preset.get("name") and preset.get("url")
         ]
+        if changed_state:
+            self.save_browser_state()
 
     def save_browser_state(self):
         os.makedirs(os.path.dirname(self.browser_presets_path), exist_ok=True)
         temporary_path = f"{self.browser_presets_path}.tmp"
         state = {
             "websites": list(self.website_searches.values()),
+            "images": list(self.image_searches.values()),
             "presets": self.browser_presets,
         }
         try:
@@ -698,23 +796,29 @@ class YouTubeBrowserWindow(QWidget):
         self.setWindowTitle(f"PremieDrop - {site_name}")
         self.update_tab_button_styles()
 
+    def current_display_url(self):
+        view = self.current_web_view()
+        if view is None:
+            return ""
+        return view.url().toString()
+
+    def update_site_dropdown_text(self, url=""):
+        if not hasattr(self, "images_tab_btn"):
+            return
+        if not url:
+            url = self.current_display_url()
+        label = url if url and url != "about:blank" else "Open website"
+        self.images_tab_btn.setText(label)
+        self.images_tab_btn.setToolTip(label)
+
+    def update_site_dropdown_url(self, tab_name, url):
+        if tab_name == self.current_tab:
+            self.update_site_dropdown_text(url)
+
     def update_tab_button_styles(self):
-        self.youtube_tab_btn.setProperty(
-            "active", self.current_tab == "youtube"
-        )
-        self.myinstants_tab_btn.setProperty(
-            "active", self.current_tab == "myinstants"
-        )
-        self.images_tab_btn.setProperty(
-            "active", self.current_tab == "images"
-        )
-        for button in (
-            self.youtube_tab_btn,
-            self.myinstants_tab_btn,
-            self.images_tab_btn,
-        ):
-            button.style().unpolish(button)
-            button.style().polish(button)
+        self.update_site_dropdown_text()
+        self.images_tab_btn.style().unpolish(self.images_tab_btn)
+        self.images_tab_btn.style().polish(self.images_tab_btn)
 
     def check_browser_command(self):
         if not os.path.isfile(self.command_path):
@@ -736,7 +840,15 @@ class YouTubeBrowserWindow(QWidget):
         self.publish_attachment_status()
         QTimer.singleShot(100, self.sync_with_premiedrop)
         if command.get("search_website"):
-            QTimer.singleShot(0, self.search_website)
+            if self.website_searches:
+                latest_website_id = max(self.website_searches)
+                QTimer.singleShot(
+                    0,
+                    lambda sid=latest_website_id:
+                    self.open_saved_website(sid)
+                )
+            else:
+                QTimer.singleShot(0, self.search_website)
         elif command.get("search_images"):
             if self.image_searches:
                 latest_search_id = max(self.image_searches)
@@ -871,17 +983,31 @@ class YouTubeBrowserWindow(QWidget):
             self.qt_frameless = True
 
         hwnd = int(self.winId())
+        GWL_STYLE = -16
+        WS_CHILD = 0x40000000
+        WS_POPUP = 0x80000000
+        WS_VISIBLE = 0x10000000
+        WS_OVERLAPPEDWINDOW = 0x00CF0000
         SWP_FRAMECHANGED = 0x0020
         SWP_SHOWWINDOW = 0x0040
 
-        # Qt WebEngine can disappear after loading when its top-level window is
-        # force-reparented with SetParent. Keep it top-level and dock by geometry.
+        if self.native_parent_hwnd != parent_hwnd:
+            ctypes.set_last_error(0)
+            previous_parent = user32.SetParent(hwnd, parent_hwnd)
+            if not previous_parent and ctypes.get_last_error():
+                raise ctypes.WinError(ctypes.get_last_error())
+            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+            style &= ~WS_OVERLAPPEDWINDOW
+            style &= ~WS_POPUP
+            style |= WS_CHILD | WS_VISIBLE
+            user32.SetWindowLongW(hwnd, GWL_STYLE, style)
+            self.native_parent_hwnd = parent_hwnd
+
         if not user32.SetWindowPos(
-            hwnd, 0, x, y, width, height,
+            hwnd, 0, 0, 0, width, height,
             SWP_FRAMECHANGED | SWP_SHOWWINDOW
         ):
             raise ctypes.WinError(ctypes.get_last_error())
-        self.native_parent_hwnd = 0
 
     def pop_out(self):
         if os.name != "nt":
@@ -960,6 +1086,7 @@ def main():
     except OSError:
         pass
     append_log(log_path, "Media browser helper starting")
+    clear_browser_storage_on_startup(log_path)
 
     def log_unhandled_exception(exc_type, exc_value, exc_traceback):
         details = "".join(traceback.format_exception(

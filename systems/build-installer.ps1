@@ -5,7 +5,7 @@ $repoRoot = Split-Path -Parent $projectRoot
 $installerSource = Join-Path $projectRoot "PremieDropInstaller.py"
 $cepPayload = Join-Path $repoRoot "cep-extension"
 $appPayload = Join-Path $projectRoot "payload\premiedrop.exe"
-$installerVersion = "0.14"
+$installerVersion = "0.14.1"
 $installerName = "PremieDropInstaller-v$installerVersion"
 $localIcon = Join-Path $projectRoot "premiedrop.ico"
 
@@ -38,6 +38,7 @@ try {
     $pyInstallerArgs = @(
         "--noconfirm",
         "--windowed",
+        "--noupx",
         "--onefile",
         "--name", $installerName,
         "--add-data", "$cepPayload;cep-extension"

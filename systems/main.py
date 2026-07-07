@@ -89,6 +89,9 @@ BROWSER_STORAGE_APP_NAMES = (
     "PremieDrop YouTube",
 )
 BROWSER_STORAGE_CHILDREN = ("cache", "QtWebEngine")
+LATEST_RELEASE_API = (
+    "https://api.github.com/repos/Lotanami/PremieDropRepo/releases/latest"
+)
 
 DEFAULT_SECTIONS = [
     "Large Video Files (1GB>)",
@@ -1245,6 +1248,13 @@ def white_media_icon(kind):
             second = [QPoint(3, 4), QPoint(10, 10), QPoint(3, 16)]
         painter.drawPolygon(QPolygon(first))
         painter.drawPolygon(QPolygon(second))
+    elif kind == "restart":
+        painter.setBrush(Qt.NoBrush)
+        painter.drawArc(QRect(4, 4, 12, 12), 35 * 16, 285 * 16)
+        painter.setBrush(Qt.white)
+        painter.drawPolygon(QPolygon([
+            QPoint(4, 4), QPoint(4, 10), QPoint(9, 7)
+        ]))
     elif kind == "fullscreen":
         painter.setBrush(Qt.NoBrush)
         painter.drawLine(4, 8, 4, 4)
@@ -1258,6 +1268,60 @@ def white_media_icon(kind):
 
     painter.end()
     return QIcon(pixmap)
+
+
+class ClickSeekSlider(QSlider):
+    """Horizontal slider that supports both direct clicks and dragging."""
+
+    jumpRequested = pyqtSignal(int)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.width() > 0:
+            if event.pos().x() >= self.width() - 8:
+                value = self.maximum()
+                self.setValue(value)
+                self.jumpRequested.emit(value)
+                event.accept()
+                return
+            current_ratio = (
+                (self.value() - self.minimum())
+                / max(1, self.maximum() - self.minimum())
+            )
+            handle_x = current_ratio * self.width()
+            if abs(event.pos().x() - handle_x) <= 12:
+                super().mousePressEvent(event)
+                return
+            ratio = event.pos().x() / self.width()
+            ratio = max(0.0, min(1.0, ratio))
+            value = round(
+                self.minimum()
+                + ratio * (self.maximum() - self.minimum())
+            )
+            self.setValue(value)
+            self.jumpRequested.emit(value)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class VideoSurface(QWidget):
+    """VLC render target that reports size changes for overlay placement."""
+
+    def __init__(self, preview):
+        super().__init__()
+        self.preview = preview
+        self.setObjectName("video_surface")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.preview.position_center_restart_button()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.preview.toggle_playback(show_feedback=True)
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
 
 class VideoPreview(QWidget):
@@ -1274,6 +1338,8 @@ class VideoPreview(QWidget):
         self.current_is_video = False
         self.fullscreen_window = None
         self.user_seeking = False
+        self.playback_finished = False
+        self.video_loading_started_at = 0
         self.video_size_attempts = 0
         self.setObjectName("video_preview")
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -1310,6 +1376,16 @@ class VideoPreview(QWidget):
             }
             QPushButton#preview_control:hover {
                 background-color: #353568;
+            }
+            QPushButton#center_restart {
+                background-color: rgba(0, 0, 0, 150);
+                color: #ffffff;
+                border: 2px solid rgba(255, 255, 255, 210);
+                border-radius: 37px;
+            }
+            QPushButton#center_restart:hover {
+                background-color: rgba(20, 20, 28, 210);
+                border-color: #ffffff;
             }
             QSlider::groove:horizontal {
                 background-color: #30304f;
@@ -1350,10 +1426,79 @@ class VideoPreview(QWidget):
         title_row.addWidget(self.close_btn)
         self.preview_layout.addLayout(title_row)
 
-        self.video_surface = QWidget()
-        self.video_surface.setObjectName("video_surface")
+        self.video_surface = VideoSurface(self)
         self.video_surface.setMinimumHeight(130)
         self.preview_layout.addWidget(self.video_surface, 1)
+
+        self.video_loading_cover = QLabel(self)
+        self.video_loading_cover.setObjectName("video_loading_cover")
+        self.video_loading_cover.setAttribute(Qt.WA_NativeWindow, True)
+        self.video_loading_cover.setStyleSheet(
+            "background-color: #050507; border: none;"
+        )
+        self.video_loading_cover.hide()
+
+        self.center_restart_btn = QPushButton(self)
+        self.center_restart_btn.setObjectName("center_restart")
+        self.center_restart_btn.setAttribute(Qt.WA_NativeWindow, True)
+        self.center_restart_btn.setIcon(white_media_icon("restart"))
+        self.center_restart_btn.setIconSize(QSize(34, 34))
+        self.center_restart_btn.setToolTip("Restart preview")
+        self.center_restart_btn.setFixedSize(74, 74)
+        self.center_restart_btn.setStyleSheet("""
+            QPushButton#center_restart {
+                background-color: rgba(0, 0, 0, 170);
+                color: #ffffff;
+                border: 2px solid rgba(255, 255, 255, 220);
+                border-radius: 37px;
+            }
+            QPushButton#center_restart:hover {
+                background-color: rgba(20, 20, 28, 225);
+                border-color: #ffffff;
+            }
+        """)
+        self.center_restart_btn.clicked.connect(
+            lambda _checked=False: self.play_btn.click()
+        )
+        self.center_restart_btn.hide()
+
+        self.center_feedback = QLabel(self)
+        self.center_feedback.setObjectName("center_feedback")
+        self.center_feedback.setAlignment(Qt.AlignCenter)
+        self.center_feedback.setAttribute(Qt.WA_NativeWindow, True)
+        self.center_feedback.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.center_feedback.setFixedSize(74, 74)
+        self.center_feedback.setStyleSheet("""
+            QLabel#center_feedback {
+                background-color: rgba(0, 0, 0, 150);
+                border-radius: 37px;
+            }
+        """)
+        self.center_feedback.hide()
+        self.feedback_hide_timer = QTimer(self)
+        self.feedback_hide_timer.setSingleShot(True)
+        self.feedback_hide_timer.timeout.connect(self.center_feedback.hide)
+
+        self.seek_time_feedback = QLabel(self)
+        self.seek_time_feedback.setObjectName("seek_time_feedback")
+        self.seek_time_feedback.setAlignment(Qt.AlignCenter)
+        self.seek_time_feedback.setAttribute(Qt.WA_NativeWindow, True)
+        self.seek_time_feedback.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.seek_time_feedback.setStyleSheet("""
+            QLabel#seek_time_feedback {
+                background-color: rgba(0, 0, 0, 175);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 150);
+                border-radius: 11px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """)
+        self.seek_time_feedback.hide()
+        self.seek_feedback_hide_timer = QTimer(self)
+        self.seek_feedback_hide_timer.setSingleShot(True)
+        self.seek_feedback_hide_timer.timeout.connect(self.seek_time_feedback.hide)
 
         self.controls = QHBoxLayout()
         self.controls.setSpacing(8)
@@ -1375,10 +1520,12 @@ class VideoPreview(QWidget):
         self.forward_btn.setToolTip("Forward 5 seconds (Right arrow)")
         self.forward_btn.clicked.connect(lambda: self.skip_seconds(5))
 
-        self.seek_slider = QSlider(Qt.Horizontal)
+        self.seek_slider = ClickSeekSlider(Qt.Horizontal)
         self.seek_slider.setRange(0, 1000)
+        self.seek_slider.jumpRequested.connect(self.seek_to_slider_value)
         self.seek_slider.sliderPressed.connect(self.start_seeking)
         self.seek_slider.sliderReleased.connect(self.finish_seeking)
+        self.seek_slider.valueChanged.connect(self.track_seek_preview)
 
         self.time_label = QLabel("0:00 / 0:00")
         self.time_label.setObjectName("preview_time")
@@ -1409,6 +1556,7 @@ class VideoPreview(QWidget):
         for key, callback in (
             (Qt.Key_Left, lambda: self.skip_seconds(-5)),
             (Qt.Key_Right, lambda: self.skip_seconds(5)),
+            (Qt.Key_R, self.restart_playback),
             (Qt.Key_Space, self.toggle_playback),
             (Qt.Key_F, self.toggle_fullscreen),
             (Qt.Key_Escape, self.handle_escape),
@@ -1436,6 +1584,11 @@ class VideoPreview(QWidget):
             self.instance = vlc.Instance("--no-video-title-show")
             self.player = self.instance.media_player_new()
             self.player.audio_set_volume(self.volume_slider.value())
+            try:
+                self.player.video_set_mouse_input(False)
+                self.player.video_set_key_input(False)
+            except Exception:
+                pass
             return True
         except Exception as exc:
             QMessageBox.warning(
@@ -1481,14 +1634,132 @@ class VideoPreview(QWidget):
         else:
             self.player.set_xwindow(window_id)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.position_center_restart_button()
+
+    def position_center_restart_button(self):
+        if not hasattr(self, "center_restart_btn"):
+            return
+        parent = self.center_restart_btn.parentWidget()
+        if parent is None:
+            return
+        surface_top_left = self.video_surface.mapTo(parent, QPoint(0, 0))
+        center_x = max(
+            0,
+            surface_top_left.x()
+            + (self.video_surface.width() - self.center_restart_btn.width()) // 2,
+        )
+        center_y = max(
+            0,
+            surface_top_left.y()
+            + (self.video_surface.height() - self.center_restart_btn.height()) // 2,
+        )
+        self.center_restart_btn.move(center_x, center_y)
+        self.center_feedback.move(center_x, center_y)
+        self.position_video_loading_cover()
+        self.position_seek_time_feedback()
+
+    def position_video_loading_cover(self):
+        if not hasattr(self, "video_loading_cover"):
+            return
+        parent = self.video_loading_cover.parentWidget()
+        if parent is None:
+            return
+        surface_top_left = self.video_surface.mapTo(parent, QPoint(0, 0))
+        self.video_loading_cover.setGeometry(
+            surface_top_left.x(),
+            surface_top_left.y(),
+            self.video_surface.width(),
+            self.video_surface.height(),
+        )
+
+    def show_video_loading_cover(self):
+        if not self.current_is_video:
+            return
+        self.video_loading_started_at = time.time()
+        self.position_video_loading_cover()
+        self.video_loading_cover.show()
+        self.video_loading_cover.raise_()
+
+    def maybe_hide_video_loading_cover(self, length, current):
+        if not self.video_loading_cover.isVisible():
+            return
+        elapsed = time.time() - self.video_loading_started_at
+        first_frame_ready = (
+            self.player is not None
+            and self.player.is_playing()
+            and (current > 120 or elapsed > 1.25)
+        )
+        if length and first_frame_ready:
+            self.video_loading_cover.hide()
+
+    def position_seek_time_feedback(self):
+        if not hasattr(self, "seek_time_feedback"):
+            return
+        parent = self.seek_time_feedback.parentWidget()
+        if parent is None:
+            return
+        surface_top_left = self.video_surface.mapTo(parent, QPoint(0, 0))
+        x = max(
+            0,
+            surface_top_left.x()
+            + (self.video_surface.width() - self.seek_time_feedback.width()) // 2,
+        )
+        y = max(
+            0,
+            surface_top_left.y()
+            + self.video_surface.height()
+            - self.seek_time_feedback.height()
+            - 18,
+        )
+        self.seek_time_feedback.move(x, y)
+
+    def slider_value_to_time(self, value):
+        if self.player is None:
+            return 0, 0
+        length = max(0, self.player.get_length())
+        max_value = max(1, self.seek_slider.maximum())
+        value = max(self.seek_slider.minimum(), min(self.seek_slider.maximum(), value))
+        return (round((value / max_value) * length) if length else 0), length
+
+    def set_seek_time_display(self, target, length):
+        text = self.format_time(target)
+        if length:
+            text = f"{text} / {self.format_time(length)}"
+        self.seek_time_feedback.setText(text)
+        self.seek_time_feedback.adjustSize()
+        self.position_seek_time_feedback()
+        self.time_label.setText(text)
+
+    def show_seek_time_feedback(self, target, length, temporary=True):
+        if not self.current_is_video:
+            return
+        self.set_seek_time_display(target, length)
+        self.seek_time_feedback.show()
+        self.seek_time_feedback.raise_()
+        if temporary:
+            self.seek_feedback_hide_timer.start(1100)
+        else:
+            self.seek_feedback_hide_timer.stop()
+
+    def hide_seek_time_feedback(self):
+        self.seek_feedback_hide_timer.stop()
+        self.seek_time_feedback.hide()
+
     def load_media(self, path, show_video):
         if not self.ensure_player():
             return False
         self.exit_fullscreen()
         self.player.stop()
         self.current_is_video = show_video
+        self.set_playback_finished(False)
         self.video_surface.setVisible(show_video)
         self.fullscreen_btn.setVisible(show_video)
+        if show_video:
+            self.show_video_loading_cover()
+        else:
+            self.video_loading_cover.hide()
         if self.standalone:
             self.setMinimumHeight(420)
             self.setMaximumHeight(16777215)
@@ -1500,10 +1771,12 @@ class VideoPreview(QWidget):
         self.name_label.setToolTip(path)
         self.seek_slider.setValue(0)
         self.time_label.setText("0:00 / 0:00")
+        self.hide_seek_time_feedback()
         media = self.instance.media_new_path(os.path.abspath(path))
         self.player.set_media(media)
         if show_video:
             self.bind_video_surface()
+            QTimer.singleShot(0, self.position_center_restart_button)
         self.player.play()
         self.set_playing_icon(True)
         self.timer.start()
@@ -1565,18 +1838,145 @@ class VideoPreview(QWidget):
     def load_audio(self, path):
         return self.load_media(path, show_video=False)
 
-    def toggle_playback(self):
+    def toggle_playback(self, show_feedback=False):
         if self.player is None:
+            return
+        if self.playback_finished:
+            self.restart_playback()
+            if show_feedback:
+                self.show_center_feedback("play", temporary=True)
             return
         if self.player.is_playing():
             self.player.pause()
             self.set_playing_icon(False)
+            self.show_paused_feedback()
         else:
+            self.set_playback_finished(False)
             self.player.play()
             self.set_playing_icon(True)
+            if show_feedback:
+                self.show_center_feedback("play", temporary=True)
+            else:
+                self.hide_center_feedback()
 
     def set_playing_icon(self, playing):
+        if self.playback_finished and not playing:
+            self.play_btn.setIcon(white_media_icon("restart"))
+            self.play_btn.setToolTip("Restart preview (Space)")
+            return
         self.play_btn.setIcon(white_media_icon("pause" if playing else "play"))
+        self.play_btn.setToolTip("Play or pause (Space)")
+
+    def restart_playback(self):
+        if self.player is None:
+            return
+        self.set_playback_finished(False)
+        self.hide_center_feedback()
+        self.player.stop()
+        if self.current_is_video:
+            self.bind_video_surface()
+            self.show_video_loading_cover()
+        self.seek_slider.setValue(0)
+        self.time_label.setText("0:00 / 0:00")
+        self.hide_seek_time_feedback()
+        self.player.play()
+        self.set_playing_icon(True)
+        self.timer.start()
+
+    def show_center_feedback(self, icon_kind, temporary):
+        if not self.current_is_video:
+            return
+        self.center_feedback.setPixmap(
+            white_media_icon(icon_kind).pixmap(QSize(34, 34))
+        )
+        self.position_center_restart_button()
+        self.center_feedback.show()
+        self.center_feedback.raise_()
+        if temporary:
+            self.feedback_hide_timer.start(650)
+        else:
+            self.feedback_hide_timer.stop()
+
+    def show_paused_feedback(self):
+        if (
+            self.current_is_video
+            and self.player is not None
+            and not self.player.is_playing()
+            and not self.playback_finished
+        ):
+            self.show_center_feedback("pause", temporary=False)
+
+    def hide_center_feedback(self):
+        self.feedback_hide_timer.stop()
+        self.center_feedback.hide()
+
+    def set_playback_finished(self, finished):
+        self.playback_finished = finished
+        visible = finished and self.current_is_video
+        if visible:
+            self.hide_center_feedback()
+        self.position_center_restart_button()
+        self.center_restart_btn.setVisible(visible)
+        if visible:
+            self.center_restart_btn.raise_()
+
+    def seek_to_slider_value(self, value):
+        if self.player is None:
+            return
+        max_value = max(1, self.seek_slider.maximum())
+        value = max(self.seek_slider.minimum(), min(self.seek_slider.maximum(), value))
+        length = max(0, self.player.get_length())
+        target = round((value / max_value) * length) if length else 0
+        self.seek_slider.setValue(value)
+        self.seek_to_time(
+            target,
+            requested_end=value >= self.seek_slider.maximum(),
+            show_feedback=True,
+        )
+
+    def seek_to_time(self, target, requested_end=False, show_feedback=False):
+        if self.player is None:
+            return
+        length = max(0, self.player.get_length())
+        if length:
+            target = max(0, min(target, length))
+            vlc_target = max(0, length - 50) if target >= length else target
+        else:
+            vlc_target = max(0, target)
+        was_finished = self.playback_finished
+        self.set_playback_finished(False)
+
+        def apply_seek(pause_after_finished_restart=False):
+            if self.player is None:
+                return
+            self.player.set_time(vlc_target)
+            if requested_end and length:
+                self.seek_slider.setValue(self.seek_slider.maximum())
+                self.time_label.setText(
+                    f"{self.format_time(length)} / {self.format_time(length)}"
+                )
+                self.player.pause()
+                self.set_playback_finished(True)
+                self.set_playing_icon(False)
+                if show_feedback:
+                    self.show_seek_time_feedback(length, length, temporary=True)
+                return
+            if pause_after_finished_restart:
+                self.player.pause()
+            self.set_playing_icon(self.player.is_playing())
+            self.show_paused_feedback()
+            if show_feedback:
+                self.show_seek_time_feedback(target, length, temporary=True)
+
+        if was_finished:
+            self.player.stop()
+            if self.current_is_video:
+                self.bind_video_surface()
+            self.player.play()
+            QTimer.singleShot(80, lambda: apply_seek(True))
+            return
+
+        apply_seek(False)
 
     def skip_seconds(self, seconds):
         if self.player is None:
@@ -1586,7 +1986,11 @@ class VideoPreview(QWidget):
         target = max(0, current + (seconds * 1000))
         if length:
             target = min(length, target)
-        self.player.set_time(target)
+        self.seek_to_time(
+            target,
+            requested_end=bool(length and target >= length),
+            show_feedback=True,
+        )
 
     def toggle_fullscreen(self):
         if not self.current_is_video or self.player is None:
@@ -1600,6 +2004,10 @@ class VideoPreview(QWidget):
         fullscreen_layout.setContentsMargins(0, 0, 0, 0)
         self.video_surface.setParent(window)
         fullscreen_layout.addWidget(self.video_surface)
+        self.video_loading_cover.setParent(window)
+        self.center_restart_btn.setParent(window)
+        self.center_feedback.setParent(window)
+        self.seek_time_feedback.setParent(window)
         self.fullscreen_window = window
 
         for key, callback in (
@@ -1608,12 +2016,24 @@ class VideoPreview(QWidget):
             (Qt.Key_Space, self.toggle_playback),
             (Qt.Key_Left, lambda: self.skip_seconds(-5)),
             (Qt.Key_Right, lambda: self.skip_seconds(5)),
+            (Qt.Key_R, self.restart_playback),
         ):
             shortcut = QShortcut(QKeySequence(key), window)
             shortcut.activated.connect(callback)
 
         window.showFullScreen()
         self.video_surface.show()
+        self.video_loading_cover.setVisible(self.video_loading_cover.isVisible())
+        self.video_loading_cover.raise_()
+        self.center_restart_btn.setVisible(
+            self.playback_finished and self.current_is_video
+        )
+        self.center_restart_btn.raise_()
+        self.center_feedback.setVisible(self.center_feedback.isVisible())
+        self.center_feedback.raise_()
+        self.seek_time_feedback.setVisible(self.seek_time_feedback.isVisible())
+        self.seek_time_feedback.raise_()
+        QTimer.singleShot(0, self.position_center_restart_button)
         QTimer.singleShot(0, self.bind_video_surface)
 
     def exit_fullscreen(self):
@@ -1622,11 +2042,26 @@ class VideoPreview(QWidget):
             return
         self.fullscreen_window = None
         self.video_surface.setParent(self)
+        self.video_loading_cover.setParent(self)
+        self.center_restart_btn.setParent(self)
+        self.center_feedback.setParent(self)
+        self.seek_time_feedback.setParent(self)
         self.preview_layout.insertWidget(1, self.video_surface, 1)
         self.video_surface.show()
+        self.video_loading_cover.setVisible(self.video_loading_cover.isVisible())
+        self.video_loading_cover.raise_()
+        self.center_restart_btn.setVisible(
+            self.playback_finished and self.current_is_video
+        )
+        self.center_restart_btn.raise_()
+        self.center_feedback.setVisible(self.center_feedback.isVisible())
+        self.center_feedback.raise_()
+        self.seek_time_feedback.setVisible(self.seek_time_feedback.isVisible())
+        self.seek_time_feedback.raise_()
         window.close()
         window.deleteLater()
         if not self.closing:
+            QTimer.singleShot(0, self.position_center_restart_button)
             QTimer.singleShot(0, self.bind_video_surface)
 
     def handle_escape(self):
@@ -1637,11 +2072,20 @@ class VideoPreview(QWidget):
 
     def start_seeking(self):
         self.user_seeking = True
+        target, length = self.slider_value_to_time(self.seek_slider.value())
+        self.show_seek_time_feedback(target, length, temporary=False)
 
     def finish_seeking(self):
         if self.player is not None:
-            self.player.set_position(self.seek_slider.value() / 1000.0)
+            self.seek_to_slider_value(self.seek_slider.value())
         self.user_seeking = False
+        self.seek_feedback_hide_timer.start(1100)
+
+    def track_seek_preview(self, value):
+        if not self.user_seeking or self.player is None:
+            return
+        target, length = self.slider_value_to_time(value)
+        self.show_seek_time_feedback(target, length, temporary=False)
 
     def set_volume(self, value):
         if self.player is not None:
@@ -1652,12 +2096,24 @@ class VideoPreview(QWidget):
             return
         length = max(0, self.player.get_length())
         current = max(0, self.player.get_time())
+        self.maybe_hide_video_loading_cover(length, current)
         if not self.user_seeking and length:
             self.seek_slider.setValue(int((current / length) * 1000))
+        if self.user_seeking:
+            target, preview_length = self.slider_value_to_time(
+                self.seek_slider.value()
+            )
+            self.set_seek_time_display(target, preview_length)
+            return
         self.time_label.setText(
             f"{self.format_time(current)} / {self.format_time(length)}"
         )
-        if not self.player.is_playing() and current >= max(0, length - 500):
+        finished = bool(
+            length and not self.player.is_playing()
+            and current >= max(0, length - 500)
+        )
+        if finished != self.playback_finished:
+            self.set_playback_finished(finished)
             self.set_playing_icon(False)
 
     @staticmethod
@@ -1673,9 +2129,13 @@ class VideoPreview(QWidget):
         self.timer.stop()
         if self.player is not None and not self.standalone:
             self.player.stop()
-        self.set_playing_icon(False)
         self.current_path = ""
         self.current_is_video = False
+        self.set_playback_finished(False)
+        self.video_loading_cover.hide()
+        self.hide_seek_time_feedback()
+        self.hide_center_feedback()
+        self.set_playing_icon(False)
         if self.standalone:
             self.close()
             return
@@ -1690,9 +2150,13 @@ class VideoPreview(QWidget):
     def hide_for_switch(self):
         if self.player is not None:
             self.player.stop()
-        self.set_playing_icon(False)
         self.current_path = ""
         self.current_is_video = False
+        self.set_playback_finished(False)
+        self.video_loading_cover.hide()
+        self.hide_seek_time_feedback()
+        self.hide_center_feedback()
+        self.set_playing_icon(False)
         self.timer.stop()
         self.hide()
 
@@ -2432,6 +2896,80 @@ class DirectFileDownloadWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class UpdateInstallerWorker(QThread):
+    progress = pyqtSignal(int, str)
+    completed = pyqtSignal(str, str)
+    failed = pyqtSignal(str)
+
+    def run(self):
+        try:
+            self.progress.emit(0, "Checking latest release...")
+            request = Request(
+                LATEST_RELEASE_API,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "PremieDrop-Updater",
+                },
+            )
+            with urlopen(request, timeout=30) as response:
+                release = json.loads(response.read().decode("utf-8"))
+
+            asset = None
+            for candidate in release.get("assets", []):
+                name = str(candidate.get("name", ""))
+                if (
+                    name.lower().startswith("premiedropinstaller")
+                    and name.lower().endswith(".exe")
+                ):
+                    asset = candidate
+                    break
+            if asset is None:
+                raise RuntimeError(
+                    "No PremieDrop installer was found on the latest release."
+                )
+
+            download_url = asset.get("browser_download_url")
+            filename = asset.get("name") or "PremieDropInstaller-latest.exe"
+            if not download_url:
+                raise RuntimeError("The latest installer asset has no download URL.")
+
+            update_dir = os.path.join(
+                local_app_data_dir(), "PremieDrop", "updates"
+            )
+            os.makedirs(update_dir, exist_ok=True)
+            destination = os.path.join(update_dir, filename)
+            temporary = f"{destination}.download"
+
+            self.progress.emit(5, f"Downloading {filename}...")
+            with urlopen(
+                Request(download_url, headers={"User-Agent": "PremieDrop-Updater"}),
+                timeout=60,
+            ) as response:
+                total = int(response.headers.get("Content-Length", "0") or 0)
+                downloaded = 0
+                with open(temporary, "wb") as installer_file:
+                    while True:
+                        chunk = response.read(1024 * 512)
+                        if not chunk:
+                            break
+                        installer_file.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            percent = min(99, max(5, int(downloaded * 100 / total)))
+                            self.progress.emit(percent, f"Downloading {filename}...")
+
+            os.replace(temporary, destination)
+            self.progress.emit(100, "Installer ready.")
+            self.completed.emit(destination, release.get("tag_name", "latest"))
+        except Exception as exc:
+            try:
+                if "temporary" in locals() and os.path.exists(temporary):
+                    os.remove(temporary)
+            except OSError:
+                pass
+            self.failed.emit(str(exc))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2449,6 +2987,8 @@ class MainWindow(QMainWindow):
         self.video_windows = []
         self.embedded_previous_size = None
         self.download_worker = None
+        self.update_worker = None
+        self.closing_for_update_installer = False
         self.youtube_browser_process = None
         self.youtube_browser_launch_time = 0
         self.embedded_browser_view = None
@@ -2792,6 +3332,23 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#update_btn {
+                background-color: transparent;
+                color: #aaaaff;
+                border: 1px solid #3a3a66;
+                border-radius: 7px;
+                padding: 5px 10px;
+                font-size: 10px;
+                font-weight: bold;
+            }
+            QPushButton#update_btn:hover {
+                background-color: #24244d;
+                color: #ffffff;
+            }
+            QPushButton#update_btn:disabled {
+                color: #555577;
+                border-color: #2a2a4a;
+            }
             QLabel#folder_label {
                 color: #555577;
                 font-size: 11px;
@@ -2890,8 +3447,14 @@ class MainWindow(QMainWindow):
 
         self.video_preview = None
         self._video_preview_header = header
+        self.update_btn = QPushButton("Install Update")
+        self.update_btn.setObjectName("update_btn")
+        self.update_btn.setToolTip("Download and run the latest PremieDrop installer")
+        self.update_btn.setFixedHeight(28)
+        self.update_btn.clicked.connect(self.install_update)
         header.addLayout(title_col)
         header.addStretch()
+        header.addWidget(self.update_btn)
         header.addWidget(self.window_size_label)
         header.addWidget(self.count_label)
         layout.addLayout(header)
@@ -4089,12 +4652,100 @@ class MainWindow(QMainWindow):
         if worker is not None:
             worker.deleteLater()
 
+    def install_update(self):
+        if (
+            not self.closing_for_update_installer
+            and self.update_worker is not None
+            and self.update_worker.isRunning()
+        ):
+            QMessageBox.information(
+                self,
+                "Update in Progress",
+                "PremieDrop is already downloading the latest installer.",
+            )
+            return
+        if self.download_worker is not None and self.download_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Download in Progress",
+                "Wait for the current media download to finish first.",
+            )
+            return
+        start = QMessageBox.question(
+            self,
+            "Install Update",
+            "Download and run the latest PremieDrop installer now?\n\n"
+            "PremieDrop will close after the installer opens.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if start != QMessageBox.Yes:
+            return
+
+        self.update_btn.setEnabled(False)
+        self.download_progress.setValue(0)
+        self.download_status.setText("Checking latest release...")
+        self.download_progress_row.show()
+
+        self.update_worker = UpdateInstallerWorker(self)
+        self.update_worker.progress.connect(self.update_install_progress)
+        self.update_worker.completed.connect(self.update_installer_ready)
+        self.update_worker.failed.connect(self.update_install_failed)
+        self.update_worker.finished.connect(self.update_install_finished)
+        self.update_worker.start()
+
+    def update_install_progress(self, percent, detail):
+        self.download_progress.setValue(percent)
+        self.download_status.setText(detail)
+
+    def update_installer_ready(self, installer_path, release_tag):
+        self.download_progress.setValue(100)
+        self.download_status.setText(f"Opening {release_tag} installer...")
+        try:
+            subprocess.Popen(
+                [installer_path],
+                cwd=os.path.dirname(installer_path),
+            )
+        except OSError as exc:
+            self.update_install_failed(str(exc))
+            return
+        self.closing_for_update_installer = True
+        QTimer.singleShot(500, self.close)
+
+    def update_install_failed(self, message):
+        self.update_btn.setEnabled(True)
+        self.download_status.setText("Update failed.")
+        QTimer.singleShot(4000, self.download_progress_row.hide)
+        QMessageBox.warning(self, "Update Failed", message)
+
+    def update_install_finished(self):
+        worker = self.update_worker
+        self.update_worker = None
+        self.update_btn.setEnabled(True)
+        if worker is not None:
+            worker.deleteLater()
+
     def preview_item(self, item):
         path = item.data(Qt.UserRole)
         file_type = get_file_type(path) if path else None
         if file_type not in ("video", "audio", "image"):
             return
         if file_type == "video":
+            requested_path = os.path.normcase(os.path.abspath(path))
+            for video_window in list(self.video_windows):
+                current_path = getattr(video_window, "current_path", "")
+                if (
+                    current_path
+                    and os.path.normcase(os.path.abspath(current_path))
+                    == requested_path
+                ):
+                    if video_window.isMinimized():
+                        video_window.showNormal()
+                    else:
+                        video_window.show()
+                    video_window.raise_()
+                    video_window.activateWindow()
+                    return
+
             video_window = VideoPreview(
                 standalone=True,
                 on_closed=self.video_window_closed
@@ -5036,6 +5687,14 @@ class MainWindow(QMainWindow):
                 self,
                 "Download in Progress",
                 "Wait for the current download to finish before closing PremieDrop."
+            )
+            event.ignore()
+            return
+        if self.update_worker is not None and self.update_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Update in Progress",
+                "Wait for the update installer to finish downloading before closing PremieDrop."
             )
             event.ignore()
             return

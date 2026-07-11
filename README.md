@@ -1,31 +1,78 @@
 # PremieDrop
 
-PremieDrop is a lightweight PyQt5 media asset manager for Adobe Premiere Pro.
-Store frequently used video, audio, and image files, preview them, organize them
-into sections, drag them into an NLE, or import the whole library into Premiere
-Pro 2022 through the included CEP extension.
+PremieDrop is a Windows desktop media library and editor workflow companion for video creators. It helps collect clips, sounds, images, and web-downloaded media into organized sections, preview them quickly, and send them into editing software with less folder-hunting.
 
-## Features
+## Install
 
-- Persistent media library with drag-and-drop input and output
-- Automatic video, audio, image, and file-size sections
-- Custom sections with rename, move, and remove controls
-- Cached FFmpeg video thumbnails
-- VLC video and audio previews
-- Scaled image previews
-- Background URL downloads through yt-dlp
-- Video quality and MP3 bitrate selection
-- Project media-folder organization
-- One-click import into matching Premiere bins
-- Duplicate-safe automatic CEP imports
-- Windows CEP installer for Premiere Pro 2022
+Download the latest stable installer from GitHub Releases:
 
-## Requirements
+https://github.com/Lotanami/PremieDropRepo/releases/latest
 
-- Windows 10/11
-- Python 3.10+
-- Adobe Premiere Pro 2022 for CEP integration
-- VLC Media Player for media previews
+The bundled installer includes the PremieDrop desktop app, Python runtime, app packages, ffmpeg support through imageio-ffmpeg, and the Premiere Pro CEP extension payload. VLC Media Player is still required separately for video preview playback.
+
+## Main Capabilities
+
+- Organize local media into named sections such as large video files, small video files, photos, sound effects, and audio.
+- Add files manually or rescan a selected project folder into section folders.
+- Save and load library presets for repeat project structures.
+- Auto-organize loose media in a project folder into preset section folders.
+- Search across files, folders, and sections.
+- Drag selected files directly from PremieDrop into supported editors.
+- Reveal files in File Explorer, remove individual items, clear sections, and rename or remove custom sections.
+- Remember the selected project folder between sessions.
+- Check for and run the latest installer from inside the app with the Install Update button.
+
+## Preview Tools
+
+- Image preview with aspect-ratio-preserving display.
+- Audio preview in a compact embedded player.
+- Standalone video preview windows powered by VLC.
+- Play, pause, restart, fullscreen, volume, +/-5 second skip, direct timeline click seeking, and drag seeking.
+- Center play/pause/restart overlays similar to a regular video player.
+- Live timestamp feedback while dragging the video timeline.
+- Duplicate prevention so opening the same video twice brings the existing preview forward instead of creating another copy.
+
+## Web And Downloads
+
+- Embedded/persistent media browser with quick entries for YouTube, MyInstants, website search, and image search.
+- Browser URL dropdown for opening presets and switching search targets.
+- Save and remove browser presets.
+- Download media from direct URLs and browser-selected URLs.
+- Remember the last accepted download folder.
+- Clear browser cache on startup while preserving saved browser presets.
+
+## Editor Integrations
+
+### Premiere Pro
+
+- Bundled CEP extension: PremieDrop Bridge V0.
+- Installer option for installing the Premiere Pro CEP extension.
+- CEP bridge imports queued PremieDrop files into Premiere bins that match PremieDrop section names.
+- Files already present in the Premiere project are skipped during automatic imports.
+- CEP debug mode is enabled by the extension installer for supported CSXS versions.
+
+### DaVinci Resolve
+
+- DaVinci Resolve Studio import path is wired through Resolve's scripting API.
+- Free Resolve automatic importing is marked unavailable because scripting support is limited.
+
+### Future Providers
+
+- Premiere Pro UXP is shown as a disabled installer/app option until the UXP package exists.
+- Final Cut Pro is represented as an extension point but is not implemented yet.
+- New import providers can be added under the release-source import provider system.
+
+## Repository Layout
+
+| Path | Purpose |
+|---|---|
+| main.py | Main PremieDrop desktop app in the legacy/default source layout. |
+| youtube_browser.py | Isolated browser helper used by the app. |
+| cep-extension/ | Premiere Pro CEP bridge package. |
+| requirements.txt | Python runtime dependencies for source runs. |
+| installer-branch | Current bundled installer/source layout used for packaged releases. |
+
+## Build From Source
 
 Install Python dependencies:
 
@@ -33,64 +80,17 @@ Install Python dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Run PremieDrop:
+Run PremieDrop from source:
 
 ```powershell
 python main.py
 ```
 
-Use the `URL` button to download supported media directly into a selected
-PremieDrop section. Choose video/MP4 or audio/MP3, quality, destination folder,
-and section before starting the background download.
+For bundled Windows installer builds, use the current release packaging on installer-branch.
 
-Only download media you have permission to use.
+## Notes For Contributors
 
-## Premiere Pro 2022 Integration
-
-Install the CEP bridge:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\cep-extension\install.ps1
-```
-
-Then:
-
-1. Restart Premiere Pro.
-2. Open `Window > Extensions > PremieDrop Bridge` or `Extensions (Legacy)`.
-3. Keep the bridge panel open.
-4. In PremieDrop, choose a media folder with `Set Folder`.
-5. Click `Import All to Premiere`.
-
-PremieDrop copies only missing files into reusable section folders. The bridge
-creates matching Premiere bins and imports the queued files automatically.
-
-The handoff uses the current user's application-data directory:
-
-```text
-%APPDATA%\PremieDrop\premiedrop_import_queue.json
-```
-
-No personal or hard-coded user paths are required.
-
-## Supported Media
-
-| Type | Extensions |
-|---|---|
-| Video | `.mp4` `.mov` `.avi` `.mkv` `.wmv` `.flv` `.webm` `.m4v` |
-| Audio | `.mp3` `.wav` `.aac` `.flac` `.ogg` `.m4a` `.aiff` |
-| Image | `.png` `.jpg` `.jpeg` `.gif` `.bmp` `.tiff` |
-
-## Notes
-
-- Dragging into Premiere's Project panel remains supported.
-- Direct external drops onto the Premiere timeline are unreliable.
-- The bundled CEP manifest targets Premiere Pro 2022 (`22.x`).
-- Newer Premiere releases should eventually use a UXP companion.
-
-## Contributing
-
-Issues and pull requests are welcome.
-
-## License
-
-MIT
+- Keep large generated executables out of normal source commits; publish them as GitHub Release assets.
+- Import integrations should use the import provider system instead of hardcoding editor-specific behavior into the main window.
+- Optional UI additions should use the UI extension registry where possible.
+- Only download media you have permission to use.

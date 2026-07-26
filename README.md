@@ -27,6 +27,7 @@ preview playback.
 - [ ] DaVinci Resolve free integration
 - [ ] Premiere Pro UXP compatibility
 - [ ] macOS compatibility
+- [ ] Fix bugs from video (One of them is alr fixed)
 
 ## Main Capabilities
 

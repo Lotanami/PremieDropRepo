@@ -7,7 +7,7 @@ software with less folder-hunting.
 
 ## App Showcase
 
-[Watch the app showcase on YouTube](https://www.youtube.com/watch?v=kisfDoBLIfw)
+[Watch the app showcase on YouTube](https://www.youtube.com/watch?v=nh3XjApA5Fg)
 
 ## Install
 

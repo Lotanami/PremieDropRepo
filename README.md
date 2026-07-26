@@ -7,7 +7,7 @@ software with less folder-hunting.
 
 ## App Showcase
 
-[![PremieDrop app showcase](https://img.youtube.com/vi/kisfDoBLIfw/maxresdefault.jpg)](https://www.youtube.com/watch?v=kisfDoBLIfw)
+[Watch the app showcase on YouTube](https://www.youtube.com/watch?v=kisfDoBLIfw)
 
 ## Install
 

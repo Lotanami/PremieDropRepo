@@ -116,7 +116,8 @@ def windows_api():
 class YouTubeBrowserWindow(QWidget):
     def __init__(
         self, web_view_class, request_path, dock_state_path, status_path,
-        log_path, command_path, initial_tab, youtube_url, myinstants_url
+        log_path, command_path, initial_tab, youtube_url, myinstants_url,
+        tenor_url
     ):
         super().__init__()
         self.request_path = request_path
@@ -137,11 +138,16 @@ class YouTubeBrowserWindow(QWidget):
                 "name": "MyInstants",
                 "url": myinstants_url,
             },
+            "tenor": {
+                "name": "Tenor",
+                "url": tenor_url,
+            },
             "search": {
                 "name": "Web Search",
                 "url": "https://www.google.com/",
             },
         }
+        self.default_site_tabs = {"youtube", "myinstants", "tenor"}
         self.image_searches = {}
         self.next_image_search_id = 1
         self.active_image_search_id = None
@@ -150,9 +156,16 @@ class YouTubeBrowserWindow(QWidget):
         self.active_website_search_id = None
         self.browser_presets = []
         self.load_browser_state()
+        if initial_tab == "giphy":
+            initial_tab = "tenor"
         self.requested_initial_tab = initial_tab
         self.current_tab = (
             initial_tab if initial_tab in self.sites else "youtube"
+        )
+        self.last_default_tab = (
+            self.current_tab
+            if self.current_tab in self.default_site_tabs
+            else "youtube"
         )
         self.attached = True
         self.native_parent_hwnd = 0
@@ -194,6 +207,11 @@ class YouTubeBrowserWindow(QWidget):
                 border-color: #f39c12;
                 font-weight: bold;
             }
+            QPushButton#tenor_home {
+                background-color: #7c3aed;
+                border-color: #a78bfa;
+                font-weight: bold;
+            }
             QPushButton#images_home {
                 background-color: #2563a8;
                 border-color: #4f8fd1;
@@ -223,6 +241,7 @@ class YouTubeBrowserWindow(QWidget):
             }
             QPushButton#youtube_home:hover,
             QPushButton#myinstants_home:hover,
+            QPushButton#tenor_home:hover,
             QPushButton#images_home:hover,
             QPushButton#site_dropdown:hover,
             QPushButton#youtube_download:hover,
@@ -364,6 +383,9 @@ class YouTubeBrowserWindow(QWidget):
             QTimer.singleShot(0, self.search_images)
         elif self.requested_initial_tab == "search":
             QTimer.singleShot(0, self.search_website)
+        elif self.requested_initial_tab.endswith("_search"):
+            site_key = self.requested_initial_tab.removesuffix("_search")
+            QTimer.singleShot(0, lambda: self.search_default_site(site_key))
 
     def current_web_view(self):
         if self.current_tab == "images":
@@ -418,6 +440,51 @@ class YouTubeBrowserWindow(QWidget):
             "https://www.google.com/search?tbm=isch&q="
             f"{quote_plus(query)}"
         )
+
+    def default_site_search_url(self, site_key, query):
+        if site_key == "youtube":
+            return (
+                "https://www.youtube.com/results?search_query="
+                f"{quote_plus(query)}"
+            )
+        if site_key == "myinstants":
+            return (
+                "https://www.myinstants.com/en/search/?name="
+                f"{quote_plus(query)}"
+            )
+        if site_key == "tenor":
+            slug = quote_plus(query).replace("+", "-")
+            return f"https://tenor.com/search/{slug}-gifs"
+        if site_key == "giphy":
+            slug = quote_plus(query).replace("+", "-")
+            return f"https://giphy.com/search/{slug}"
+        return ""
+
+    def search_default_site(self, site_key):
+        if site_key not in self.default_site_tabs and site_key != "giphy":
+            return
+        site_name = self.sites[site_key]["name"] if site_key in self.sites else "Giphy"
+        prompt_site_name = {
+            "tenor": "Tenor GIFs",
+            "giphy": "Giphy GIFs",
+        }.get(site_key, site_name)
+        query, accepted = QInputDialog.getText(
+            self,
+            f"Search {prompt_site_name}",
+            "Search for:",
+        )
+        query = query.strip()
+        if not accepted or not query:
+            if site_key in self.sites:
+                self.switch_tab(site_key)
+            return
+        target_url = self.default_site_search_url(site_key, query)
+        if not target_url:
+            return
+        target_tab = site_key if site_key in self.sites else "search"
+        self.switch_tab(target_tab)
+        self.web_views[target_tab].setUrl(QUrl(target_url))
+        self.update_site_dropdown_text(target_url)
 
     def usable_browser_url(self, url):
         return isinstance(url, str) and bool(url) and url != "about:blank"
@@ -543,6 +610,27 @@ class YouTubeBrowserWindow(QWidget):
         myinstants_action.triggered.connect(
             lambda: self.switch_tab("myinstants")
         )
+        tenor_action = self.images_menu.addAction("Tenor")
+        tenor_action.triggered.connect(lambda: self.switch_tab("tenor"))
+        self.images_menu.addSeparator()
+        youtube_search_action = self.images_menu.addAction("Search YouTube...")
+        youtube_search_action.triggered.connect(
+            lambda: self.search_default_site("youtube")
+        )
+        myinstants_search_action = self.images_menu.addAction(
+            "Search MyInstants..."
+        )
+        myinstants_search_action.triggered.connect(
+            lambda: self.search_default_site("myinstants")
+        )
+        tenor_search_action = self.images_menu.addAction("Search Tenor GIFs...")
+        tenor_search_action.triggered.connect(
+            lambda: self.search_default_site("tenor")
+        )
+        giphy_search_action = self.images_menu.addAction("Search Giphy GIFs...")
+        giphy_search_action.triggered.connect(
+            lambda: self.search_default_site("giphy")
+        )
         self.images_menu.addSeparator()
         website_action = self.images_menu.addAction("Search Website")
         website_action.triggered.connect(self.search_website)
@@ -621,9 +709,7 @@ class YouTubeBrowserWindow(QWidget):
         del self.website_searches[website_id]
         if self.active_website_search_id == website_id:
             self.active_website_search_id = None
-            self.web_views["search"].setUrl(
-                QUrl(self.sites["search"]["url"])
-            )
+            self.return_to_last_default_site()
         self.save_browser_state()
 
     def delete_saved_image_search(self, search_id):
@@ -631,7 +717,7 @@ class YouTubeBrowserWindow(QWidget):
             return
         if self.active_image_search_id == search_id:
             self.unload_active_image_view()
-            self.switch_tab("search")
+            self.return_to_last_default_site()
         self.image_searches.pop(search_id, None)
         self.save_browser_state()
 
@@ -789,12 +875,22 @@ class YouTubeBrowserWindow(QWidget):
             self.unload_active_image_view()
         if tab_name != "search":
             self.active_website_search_id = None
+        if tab_name in self.default_site_tabs:
+            self.last_default_tab = tab_name
         self.current_tab = tab_name
         self.download_btn.setVisible(tab_name == "youtube")
         self.tabs.setCurrentWidget(self.web_views[tab_name])
         site_name = self.sites[tab_name]["name"]
         self.setWindowTitle(f"PremieDrop - {site_name}")
         self.update_tab_button_styles()
+
+    def return_to_last_default_site(self):
+        fallback_tab = (
+            self.last_default_tab
+            if self.last_default_tab in self.sites
+            else "youtube"
+        )
+        self.switch_tab(fallback_tab)
 
     def current_display_url(self):
         view = self.current_web_view()
@@ -839,7 +935,10 @@ class YouTubeBrowserWindow(QWidget):
         self.activateWindow()
         self.publish_attachment_status()
         QTimer.singleShot(100, self.sync_with_premiedrop)
-        if command.get("search_website"):
+        site_search = command.get("site_search", "")
+        if site_search:
+            QTimer.singleShot(0, lambda key=site_search: self.search_default_site(key))
+        elif command.get("search_website"):
             if self.website_searches:
                 latest_website_id = max(self.website_searches)
                 QTimer.singleShot(
@@ -865,6 +964,10 @@ class YouTubeBrowserWindow(QWidget):
     def hide_browser_panel(self):
         if self.current_tab == "images":
             self.unload_active_image_view()
+            self.return_to_last_default_site()
+        elif self.current_tab == "search":
+            self.active_website_search_id = None
+            self.return_to_last_default_site()
         self.hide()
         self.attached = False
         self.attach_btn.setText("Attach to PremieDrop")
@@ -1080,6 +1183,7 @@ def main():
     initial_tab = sys.argv[6]
     youtube_url = sys.argv[7]
     myinstants_url = sys.argv[8]
+    tenor_url = sys.argv[9] if len(sys.argv) > 9 else "https://tenor.com/"
     try:
         if os.path.isfile(log_path):
             os.remove(log_path)
@@ -1219,7 +1323,8 @@ def main():
 
     window = YouTubeBrowserWindow(
         PremieDropWebView, sys.argv[1], sys.argv[2], sys.argv[3],
-        log_path, command_path, initial_tab, youtube_url, myinstants_url
+        log_path, command_path, initial_tab, youtube_url, myinstants_url,
+        tenor_url
     )
     window.show()
     append_log(log_path, f"Browser window created: hwnd={int(window.winId())}")

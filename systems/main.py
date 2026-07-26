@@ -114,6 +114,7 @@ YOUTUBE_PANEL_PREFERRED_WIDTH = 900
 ATTACHED_BROWSER_WINDOW_WIDTH = 1250
 YOUTUBE_HOME_URL = "https://www.youtube.com/"
 MYINSTANTS_HOME_URL = "https://www.myinstants.com/en/categories/memes/gb/"
+TENOR_HOME_URL = "https://tenor.com/"
 IMAGE_PREVIEW_HEIGHT = 300
 IMAGE_PREVIEW_SCALE = 0.50
 IMAGE_PREVIEW_TEXT_SIZE = 11
@@ -2999,6 +3000,7 @@ class MainWindow(QMainWindow):
         self.embedded_browser_presets_path = os.path.join(
             APP_DATA_DIR, "browser_presets.json"
         )
+        self.embedded_last_default_browser_tab = "youtube"
         self.youtube_panel_attached = False
         self.youtube_panel_width = 0
         self.youtube_base_width = BASE_WINDOW_WIDTH
@@ -3430,11 +3432,8 @@ class MainWindow(QMainWindow):
 
         title = QLabel(APP_TEXT["title"])
         title.setObjectName("title")
-        subtitle = QLabel(APP_TEXT["subtitle"])
-        subtitle.setObjectName("subtitle")
 
         title_col.addWidget(title)
-        title_col.addWidget(subtitle)
 
         self.count_label = QLabel("")
         self.count_label.setObjectName("count_label")
@@ -3520,11 +3519,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.image_preview, 0, Qt.AlignHCenter)
 
         # ── Drag out tip ────────────────────────────────────────────
-        drag_tip = QLabel(APP_TEXT["drag_tip"])
-        drag_tip.setObjectName("drag_tip")
-        drag_tip.setAlignment(Qt.AlignCenter)
-        layout.addWidget(drag_tip)
-
         library_tools_row = QHBoxLayout()
         library_tools_row.setSpacing(6)
 
@@ -3623,6 +3617,18 @@ class MainWindow(QMainWindow):
         youtube_action.triggered.connect(self.open_youtube_browser)
         myinstants_action = web_menu.addAction("MyInstants")
         myinstants_action.triggered.connect(self.open_myinstants_browser)
+        tenor_action = web_menu.addAction("Tenor")
+        tenor_action.triggered.connect(self.open_tenor_browser)
+        web_menu.addSeparator()
+        youtube_search_action = web_menu.addAction("Search YouTube...")
+        youtube_search_action.triggered.connect(self.search_youtube_browser)
+        myinstants_search_action = web_menu.addAction("Search MyInstants...")
+        myinstants_search_action.triggered.connect(self.search_myinstants_browser)
+        tenor_search_action = web_menu.addAction("Search Tenor GIFs...")
+        tenor_search_action.triggered.connect(self.search_tenor_browser)
+        giphy_search_action = web_menu.addAction("Search Giphy GIFs...")
+        giphy_search_action.triggered.connect(self.search_giphy_browser)
+        web_menu.addSeparator()
         website_action = web_menu.addAction("Search Website")
         website_action.triggered.connect(self.open_website_search)
         images_action = web_menu.addAction("Search Images")
@@ -3693,6 +3699,21 @@ class MainWindow(QMainWindow):
 
     def open_myinstants_browser(self):
         self.open_media_browser("myinstants")
+
+    def open_tenor_browser(self):
+        self.open_media_browser("tenor")
+
+    def search_youtube_browser(self):
+        self.open_media_browser("youtube_search")
+
+    def search_myinstants_browser(self):
+        self.open_media_browser("myinstants_search")
+
+    def search_tenor_browser(self):
+        self.open_media_browser("tenor_search")
+
+    def search_giphy_browser(self):
+        self.open_media_browser("giphy_search")
 
     def open_image_search(self):
         self.open_media_browser("images")
@@ -3876,6 +3897,35 @@ class MainWindow(QMainWindow):
         myinstants_action.triggered.connect(
             lambda _checked=False: self.open_media_browser("myinstants")
         )
+        tenor_action = self.embedded_browser_menu.addAction("Tenor")
+        tenor_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("tenor")
+        )
+        self.embedded_browser_menu.addSeparator()
+        youtube_search_action = self.embedded_browser_menu.addAction(
+            "Search YouTube..."
+        )
+        youtube_search_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("youtube_search")
+        )
+        myinstants_search_action = self.embedded_browser_menu.addAction(
+            "Search MyInstants..."
+        )
+        myinstants_search_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("myinstants_search")
+        )
+        tenor_search_action = self.embedded_browser_menu.addAction(
+            "Search Tenor GIFs..."
+        )
+        tenor_search_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("tenor_search")
+        )
+        giphy_search_action = self.embedded_browser_menu.addAction(
+            "Search Giphy GIFs..."
+        )
+        giphy_search_action.triggered.connect(
+            lambda _checked=False: self.open_media_browser("giphy_search")
+        )
         self.embedded_browser_menu.addSeparator()
         website_action = self.embedded_browser_menu.addAction("Search Website...")
         website_action.triggered.connect(
@@ -3905,6 +3955,11 @@ class MainWindow(QMainWindow):
         remove_action = self.embedded_browser_menu.addAction("Remove Current Preset")
         remove_action.setEnabled(self.current_embedded_preset_index() is not None)
         remove_action.triggered.connect(self.remove_current_embedded_preset)
+        remove_saved_action = self.embedded_browser_menu.addAction(
+            "Remove Saved Preset..."
+        )
+        remove_saved_action.setEnabled(bool(self.embedded_browser_presets))
+        remove_saved_action.triggered.connect(self.remove_saved_embedded_preset)
 
     def save_current_embedded_preset(self):
         if self.embedded_browser_view is None:
@@ -3949,9 +4004,37 @@ class MainWindow(QMainWindow):
         self.save_embedded_browser_presets()
         self.refresh_embedded_site_menu()
 
+    def remove_saved_embedded_preset(self):
+        if not self.embedded_browser_presets:
+            return
+        preset_names = [preset["name"] for preset in self.embedded_browser_presets]
+        name, accepted = QInputDialog.getItem(
+            self,
+            "Remove Website Preset",
+            "Preset to remove:",
+            preset_names,
+            0,
+            False,
+        )
+        if not accepted or not name:
+            return
+        self.embedded_browser_presets = [
+            preset
+            for preset in self.embedded_browser_presets
+            if preset["name"] != name
+        ]
+        self.save_embedded_browser_presets()
+        self.refresh_embedded_site_menu()
+
     def close_embedded_browser(self):
         if self.embedded_browser_view is not None:
-            self.embedded_browser_view.setUrl(QUrl("about:blank"))
+            self.embedded_browser_view.setUrl(
+                QUrl(
+                    self.embedded_browser_url_for_tab(
+                        self.embedded_last_default_browser_tab
+                    )
+                )
+            )
         self.set_youtube_panel_attached(False)
 
     def open_embedded_browser_url(self, target_url):
@@ -3971,6 +4054,14 @@ class MainWindow(QMainWindow):
             return YOUTUBE_HOME_URL
         if tab_name == "myinstants":
             return MYINSTANTS_HOME_URL
+        if tab_name == "tenor":
+            return TENOR_HOME_URL
+        if tab_name in (
+            "youtube_search", "myinstants_search", "tenor_search",
+            "giphy_search",
+        ):
+            site_key = tab_name.removesuffix("_search")
+            return self.default_site_search_url(site_key)
         if tab_name == "images":
             query, accepted = QInputDialog.getText(
                 self,
@@ -3995,6 +4086,39 @@ class MainWindow(QMainWindow):
             if "." in query and " " not in query:
                 return f"https://{query}"
             return f"https://www.google.com/search?q={quote_plus(query)}"
+        return ""
+
+    def default_site_search_url(self, site_key):
+        names = {
+            "youtube": "YouTube",
+            "myinstants": "MyInstants",
+            "tenor": "Tenor GIFs",
+            "giphy": "Giphy GIFs",
+        }
+        query, accepted = QInputDialog.getText(
+            self,
+            f"Search {names.get(site_key, 'Website')}",
+            "Search for:",
+        )
+        query = query.strip()
+        if not accepted or not query:
+            return ""
+        if site_key == "youtube":
+            return (
+                "https://www.youtube.com/results?search_query="
+                f"{quote_plus(query)}"
+            )
+        if site_key == "myinstants":
+            return (
+                "https://www.myinstants.com/en/search/?name="
+                f"{quote_plus(query)}"
+            )
+        if site_key == "tenor":
+            slug = quote_plus(query).replace("+", "-")
+            return f"https://tenor.com/search/{slug}-gifs"
+        if site_key == "giphy":
+            slug = quote_plus(query).replace("+", "-")
+            return f"https://giphy.com/search/{slug}"
         return ""
 
     def apply_theme_config(self):
@@ -4327,6 +4451,9 @@ class MainWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def open_media_browser(self, tab_name):
+        default_tab = tab_name.removesuffix("_search")
+        if default_tab in ("youtube", "myinstants", "tenor"):
+            self.embedded_last_default_browser_tab = default_tab
         if (
             self.youtube_browser_process is not None
             and self.youtube_browser_process.poll() is None
@@ -4379,6 +4506,7 @@ class MainWindow(QMainWindow):
                     tab_name,
                     YOUTUBE_HOME_URL,
                     MYINSTANTS_HOME_URL,
+                    TENOR_HOME_URL,
                 ],
                 **launch_options,
             )
@@ -4394,6 +4522,11 @@ class MainWindow(QMainWindow):
         temporary_path = f"{YOUTUBE_BROWSER_COMMAND_FILE}.tmp"
         command = {
             "tab": tab_name,
+            "site_search": (
+                tab_name.removesuffix("_search")
+                if tab_name.endswith("_search")
+                else ""
+            ),
             "search_images": tab_name == "images",
             "search_website": tab_name == "search",
             "created_at": datetime.now(timezone.utc).timestamp(),

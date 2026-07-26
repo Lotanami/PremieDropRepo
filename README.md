@@ -87,6 +87,13 @@ preview playback.
 - Final Cut Pro is represented as an extension point but is not implemented yet.
 - New import providers can be added under `systems/import_providers/`.
 
+## Goals
+
+- [ ] Final Cut Pro integration
+- [ ] DaVinci Resolve free integration
+- [ ] Premiere Pro UXP compatibility
+- [ ] macOS compatibility
+
 ## Repository Layout
 
 | Path | Purpose |

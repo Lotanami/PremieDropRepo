@@ -136,6 +136,8 @@ fall back to downloading the latest release asset.
 
 ## Notes For Contributors
 
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup steps, project structure,
+  and pull request guidance.
 - Keep large generated executables out of normal source commits; publish them as
   GitHub Release assets.
 - UI text, sizes, and theme values live in

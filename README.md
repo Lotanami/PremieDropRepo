@@ -21,7 +21,7 @@ packages, ffmpeg support through `imageio-ffmpeg`, and the Premiere Pro CEP
 extension payload. VLC Media Player is still required separately for video
 preview playback.
 
-## Goals
+## Future Goals
 
 - [ ] Final Cut Pro integration
 - [ ] DaVinci Resolve free integration

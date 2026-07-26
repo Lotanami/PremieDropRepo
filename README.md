@@ -5,6 +5,10 @@ video creators. It helps collect clips, sounds, images, and web-downloaded media
 into organized sections, preview them quickly, and send them into editing
 software with less folder-hunting.
 
+## App Showcase
+
+[![PremieDrop app showcase](https://img.youtube.com/vi/kisfDoBLIfw/maxresdefault.jpg)](https://www.youtube.com/watch?v=kisfDoBLIfw)
+
 ## Install
 
 Download the latest stable installer from GitHub Releases:

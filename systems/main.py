@@ -3235,6 +3235,14 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#section_btn:pressed {
+                background-color: #181833;
+            }
+            QPushButton#section_btn:disabled {
+                background-color: transparent;
+                color: #555577;
+                border-color: #222233;
+            }
             QPushButton#download_btn {
                 background-color: #2b4c7e;
                 color: #ffffff;
@@ -3246,6 +3254,14 @@ class MainWindow(QMainWindow):
             }
             QPushButton#download_btn:hover {
                 background-color: #35619c;
+            }
+            QPushButton#download_btn:pressed {
+                background-color: #27466f;
+            }
+            QPushButton#download_btn:disabled {
+                background-color: #20283a;
+                color: #777788;
+                border-color: #30394f;
             }
             QPushButton#web_btn {
                 background-color: #4b356f;

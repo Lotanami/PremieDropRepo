@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest a new feature or workflow improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      placeholder: What feels slow, missing, confusing, or annoying right now?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should PremieDrop do?
+      placeholder: Describe the feature or workflow you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - UI/UX
+        - Web/downloads
+        - Media preview
+        - Premiere Pro / CEP
+        - DaVinci Resolve
+        - Final Cut Pro
+        - Installer/packaging
+        - macOS compatibility
+        - Other
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes, examples, or references
+      placeholder: Add screenshots, links, or examples if useful.

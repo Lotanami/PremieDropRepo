@@ -140,6 +140,9 @@ fall back to downloading the latest release asset.
 
 - Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup steps, project structure,
   and pull request guidance.
+- Read [SUPPORT.md](SUPPORT.md) for bug report and support guidance.
+- Read [SECURITY.md](SECURITY.md) before reporting security-sensitive issues.
+- Read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
 - Keep large generated executables out of normal source commits; publish them as
   GitHub Release assets.
 - UI text, sizes, and theme values live in

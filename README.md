@@ -5,16 +5,31 @@ video creators. It helps collect clips, sounds, images, and web-downloaded media
 into organized sections, preview them quickly, and send them into editing
 software with less folder-hunting.
 
+## App Showcase
+
+[![Watch on YouTube](https://img.shields.io/badge/Watch%20on-YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=nh3XjApA5Fg)
+
+![PremieDrop app preview](docs/assets/premiedrop-app-preview.png)
+
 ## Install
 
 Download the latest stable installer from GitHub Releases:
 
-https://github.com/Lotanami/PremieDropRepo/releases/latest
+[![Latest Release](https://img.shields.io/badge/Latest-Release-238636?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Lotanami/PremieDropRepo/releases/latest)
+
+Or test the current beta:
+
+[![Download PremieDrop v0.14.4 Beta](https://img.shields.io/badge/Download-PremieDrop%20v0.14.4%20Beta-6C63FF?style=for-the-badge)](https://github.com/Lotanami/PremieDropRepo/releases/download/v0.14.4-beta/PremieDropInstaller-v0.14.4-beta.exe)
+[![Beta downloads](https://img.shields.io/github/downloads/Lotanami/PremieDropRepo/v0.14.4-beta/PremieDropInstaller-v0.14.4-beta.exe?label=beta%20downloads&style=for-the-badge)](https://github.com/Lotanami/PremieDropRepo/releases/tag/v0.14.4-beta)
 
 The bundled installer includes the PremieDrop desktop app, Python runtime, app
 packages, ffmpeg support through `imageio-ffmpeg`, and the Premiere Pro CEP
 extension payload. VLC Media Player is still required separately for video
 preview playback.
+
+## Future Goals
+
+See [CHECKLIST.md](CHECKLIST.md) for current roadmap and cleanup goals.
 
 ## Main Capabilities
 
@@ -46,12 +61,15 @@ preview playback.
 ## Web And Downloads
 
 - Embedded/persistent media browser with quick entries for YouTube, MyInstants,
-  website search, and image search.
+  Tenor, website search, and image search.
 - Browser URL dropdown for opening presets and switching search targets.
+- Direct search actions for YouTube, MyInstants, Tenor GIFs, and Giphy GIFs.
 - Save and remove browser presets.
 - Download media from direct URLs and browser-selected URLs.
 - Remember the last accepted download folder.
 - Clear browser cache on startup while preserving saved browser presets.
+- Return from temporary website/image searches to the last default website the
+  user had open.
 
 ## Editor Integrations
 
@@ -114,6 +132,11 @@ fall back to downloading the latest release asset.
 
 ## Notes For Contributors
 
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup steps, project structure,
+  and pull request guidance.
+- Read [SUPPORT.md](SUPPORT.md) for bug report and support guidance.
+- Read [SECURITY.md](SECURITY.md) before reporting security-sensitive issues.
+- Read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
 - Keep large generated executables out of normal source commits; publish them as
   GitHub Release assets.
 - UI text, sizes, and theme values live in

@@ -1,0 +1,53 @@
+name: Bug report
+description: Report something that is broken or behaving weirdly.
+title: "[Bug]: "
+labels:
+  - bug
+  - stability
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Explain the bug clearly.
+      placeholder: What did PremieDrop do?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      placeholder: What should have happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open PremieDrop
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PremieDrop version
+      placeholder: "Example: v0.14.4 Beta"
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      placeholder: "Example: Windows 11"
+  - type: textarea
+    id: media-editor
+    attributes:
+      label: Editor/software involved
+      description: Fill this in if the issue involves Premiere Pro, CEP, VLC, downloads, etc.
+      placeholder: "Example: Premiere Pro 2024, VLC installed"
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots, logs, or video
+      description: Drag images/logs here if they help.

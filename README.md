@@ -9,6 +9,8 @@ software with less folder-hunting.
 
 [Watch the app showcase on YouTube](https://www.youtube.com/watch?v=nh3XjApA5Fg)
 
+![PremieDrop app preview](docs/assets/premiedrop-app-preview.png)
+
 ## Install
 
 Download the latest stable installer from GitHub Releases:

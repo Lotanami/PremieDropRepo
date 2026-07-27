@@ -15,7 +15,7 @@ software with less folder-hunting.
 
 Download the latest stable installer from GitHub Releases:
 
-https://github.com/Lotanami/PremieDropRepo/releases/latest
+[![Latest Release](https://img.shields.io/badge/Latest-Release-238636?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Lotanami/PremieDropRepo/releases/latest)
 
 Or test the current beta:
 

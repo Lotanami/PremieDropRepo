@@ -9,7 +9,7 @@ software with less folder-hunting.
 
 [![Watch on YouTube](https://img.shields.io/badge/Watch%20on-YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=nh3XjApA5Fg)
 
-![PremieDrop app preview](docs/assets/premiedrop-app-preview.png)
+![PremieDrop app preview](docs/assets/premiedrop-app-preview.gif)
 
 ## Install
 

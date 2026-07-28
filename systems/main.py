@@ -3275,6 +3275,15 @@ class MainWindow(QMainWindow):
             QPushButton#web_btn:hover {
                 background-color: #60448c;
             }
+            QPushButton#web_btn:pressed {
+                background-color: #3b2958;
+            }
+
+            QPushButton#web_btn:disabled {
+                background-color: #252033;
+                color: #666677;
+                border-color: #333344;
+            }
             QMenu#web_menu {
                 background-color: #16213e;
                 color: #eeeeff;
@@ -3319,6 +3328,13 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#clear_btn:pressed {
+                background-color: #181833;
+            }
+            QPushButton#clear_btn:disabled {
+                color: #555577;
+                border-color: #222233;
+            }
             QToolButton#copy_btn {
                 background-color: #1a6b3a;
                 color: white;
@@ -3350,6 +3366,13 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#set_folder_btn:pressed {
+                background-color: #181833;
+            }
+            QPushButton#set_folder_btn:disabled {
+                color: #555577;
+                border-color: #222233;
+            }
             QPushButton#update_btn {
                 background-color: transparent;
                 color: #aaaaff;
@@ -3362,6 +3385,9 @@ class MainWindow(QMainWindow):
             QPushButton#update_btn:hover {
                 background-color: #24244d;
                 color: #ffffff;
+            }
+            QPushButton#update_btn:pressed {
+                background-color: #181833;
             }
             QPushButton#update_btn:disabled {
                 color: #555577;

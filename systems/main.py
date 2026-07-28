@@ -3800,7 +3800,6 @@ class MainWindow(QMainWindow):
         close_btn.setText("×")
         close_btn.setToolTip("Close browser")
         close_btn.setFixedSize(30, 30)
-
         browser_tool_style = (
             "QToolButton {"
             "background-color: #101024;"
@@ -3813,6 +3812,15 @@ class MainWindow(QMainWindow):
             "QToolButton:hover {"
             "background-color: #24244d;"
             "border-color: #6C63FF;"
+            "}"
+            "QToolButton:pressed {"
+            "background-color: #181833;"
+            "border-color: #7b72ff;"
+            "}"
+            "QToolButton:disabled {"
+            "background-color: #252033;"
+            "color: #666677;"
+            "border-color: #333344;"
             "}"
         )
         for button in (back_btn, forward_btn, reload_btn, close_btn):
@@ -3829,17 +3837,31 @@ class MainWindow(QMainWindow):
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
         self.embedded_browser_url.setStyleSheet(
-            "background-color: #101024; color: #eeeeff; "
-            "border: 1px solid #35355f; border-radius: 5px; "
-            "padding: 0 10px; text-align: left;"
-        )
-        self.embedded_browser_menu = QMenu(self.embedded_browser_url)
-        self.embedded_browser_menu.setObjectName("web_menu")
-        self.embedded_browser_menu.aboutToShow.connect(
-            self.refresh_embedded_site_menu
+            """
+            QToolButton {
+                background-color: #101024;
+                color: #eeeeff;
+                border: 1px solid #35355f;
+                border-radius: 5px;
+                padding: 0 10px;
+                text-align: left;
+            }
+            QToolButton:hover {
+                background-color: #24244d;
+                border-color: #6C63FF;
+            }
+            QToolButton:pressed {
+                background-color: #181833;
+                border-color: #7b72ff;
+            }
+            QToolButton:disabled {
+                background-color: #252033;
+                color: #666677;
+                border-color: #333344;
+            }
+            """
         )
         self.embedded_browser_url.setMenu(self.embedded_browser_menu)
-
         toolbar.addWidget(back_btn)
         toolbar.addWidget(forward_btn)
         toolbar.addWidget(reload_btn)

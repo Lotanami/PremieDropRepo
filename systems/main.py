@@ -3235,6 +3235,14 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#section_btn:pressed {
+                background-color: #181833;
+            }
+            QPushButton#section_btn:disabled {
+                background-color: transparent;
+                color: #555577;
+                border-color: #222233;
+            }
             QPushButton#download_btn {
                 background-color: #2b4c7e;
                 color: #ffffff;
@@ -3247,6 +3255,14 @@ class MainWindow(QMainWindow):
             QPushButton#download_btn:hover {
                 background-color: #35619c;
             }
+            QPushButton#download_btn:pressed {
+                background-color: #27466f;
+            }
+            QPushButton#download_btn:disabled {
+                background-color: #20283a;
+                color: #777788;
+                border-color: #30394f;
+            }
             QPushButton#web_btn {
                 background-color: #4b356f;
                 color: #ffffff;
@@ -3258,6 +3274,15 @@ class MainWindow(QMainWindow):
             }
             QPushButton#web_btn:hover {
                 background-color: #60448c;
+            }
+            QPushButton#web_btn:pressed {
+                background-color: #3b2958;
+            }
+
+            QPushButton#web_btn:disabled {
+                background-color: #252033;
+                color: #666677;
+                border-color: #333344;
             }
             QMenu#web_menu {
                 background-color: #16213e;
@@ -3303,6 +3328,13 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#clear_btn:pressed {
+                background-color: #181833;
+            }
+            QPushButton#clear_btn:disabled {
+                color: #555577;
+                border-color: #222233;
+            }
             QToolButton#copy_btn {
                 background-color: #1a6b3a;
                 color: white;
@@ -3334,6 +3366,13 @@ class MainWindow(QMainWindow):
                 background-color: #22224a;
                 color: #ffffff;
             }
+            QPushButton#set_folder_btn:pressed {
+                background-color: #181833;
+            }
+            QPushButton#set_folder_btn:disabled {
+                color: #555577;
+                border-color: #222233;
+            }
             QPushButton#update_btn {
                 background-color: transparent;
                 color: #aaaaff;
@@ -3346,6 +3385,9 @@ class MainWindow(QMainWindow):
             QPushButton#update_btn:hover {
                 background-color: #24244d;
                 color: #ffffff;
+            }
+            QPushButton#update_btn:pressed {
+                background-color: #181833;
             }
             QPushButton#update_btn:disabled {
                 color: #555577;
@@ -3758,7 +3800,6 @@ class MainWindow(QMainWindow):
         close_btn.setText("×")
         close_btn.setToolTip("Close browser")
         close_btn.setFixedSize(30, 30)
-
         browser_tool_style = (
             "QToolButton {"
             "background-color: #101024;"
@@ -3771,6 +3812,15 @@ class MainWindow(QMainWindow):
             "QToolButton:hover {"
             "background-color: #24244d;"
             "border-color: #6C63FF;"
+            "}"
+            "QToolButton:pressed {"
+            "background-color: #181833;"
+            "border-color: #7b72ff;"
+            "}"
+            "QToolButton:disabled {"
+            "background-color: #252033;"
+            "color: #666677;"
+            "border-color: #333344;"
             "}"
         )
         for button in (back_btn, forward_btn, reload_btn, close_btn):
@@ -3787,17 +3837,31 @@ class MainWindow(QMainWindow):
             QSizePolicy.Expanding, QSizePolicy.Fixed
         )
         self.embedded_browser_url.setStyleSheet(
-            "background-color: #101024; color: #eeeeff; "
-            "border: 1px solid #35355f; border-radius: 5px; "
-            "padding: 0 10px; text-align: left;"
-        )
-        self.embedded_browser_menu = QMenu(self.embedded_browser_url)
-        self.embedded_browser_menu.setObjectName("web_menu")
-        self.embedded_browser_menu.aboutToShow.connect(
-            self.refresh_embedded_site_menu
+            """
+            QToolButton {
+                background-color: #101024;
+                color: #eeeeff;
+                border: 1px solid #35355f;
+                border-radius: 5px;
+                padding: 0 10px;
+                text-align: left;
+            }
+            QToolButton:hover {
+                background-color: #24244d;
+                border-color: #6C63FF;
+            }
+            QToolButton:pressed {
+                background-color: #181833;
+                border-color: #7b72ff;
+            }
+            QToolButton:disabled {
+                background-color: #252033;
+                color: #666677;
+                border-color: #333344;
+            }
+            """
         )
         self.embedded_browser_url.setMenu(self.embedded_browser_menu)
-
         toolbar.addWidget(back_btn)
         toolbar.addWidget(forward_btn)
         toolbar.addWidget(reload_btn)

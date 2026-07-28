@@ -27,6 +27,27 @@ packages, ffmpeg support through `imageio-ffmpeg`, and the Premiere Pro CEP
 extension payload. VLC Media Player is still required separately for video
 preview playback.
 
+## Run From Source
+
+PremieDrop is currently developed and tested on Windows.
+
+```powershell
+git clone https://github.com/Lotanami/PremieDropRepo.git
+cd PremieDropRepo\systems
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
+```
+
+If PowerShell blocks virtual environment activation, run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+VLC Media Player is recommended for video previews when running from source.
+
 ## Future Goals
 
 See [CHECKLIST.md](CHECKLIST.md) for current roadmap and cleanup goals.
